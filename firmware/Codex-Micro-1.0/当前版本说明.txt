@@ -1,0 +1,18 @@
+Codex Micro for Waveshare ESP32-S3-Touch-LCD-1.85B
+当前稳定基线：2026-08-06
+
+已包含：
+- 六个 Agent 状态、切换与颜色显示
+- 中央额度与重置倒计时
+- Send、Fast、Approve、Decline、Fork、Mic 命令页
+- BOOT Push-to-talk
+- 四方向触摸手势
+- 蓝牙 Vendor HID 兼容协议
+- 完成提示音和电量读取
+- 已连接时额度同步工具
+- 未连接时双击中央重新开启广播
+- 长按中央 20 秒恢复出厂
+- 唯一设备短码和加密额度特征
+
+本包是升级版设计开始前的冻结备份。后续 UI、虚拟旋钮、IMU、USB HID、OTA 等
+升级不包含在本版本中。

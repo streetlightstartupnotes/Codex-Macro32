@@ -1,0 +1,12 @@
+.DS_Store
+__MACOSX/
+__pycache__/
+*.py[cod]
+.venv/
+.pio/
+.env
+.env.*
+*.bin
+*.zip
+CodexV11Secrets.h
+firmware/Codex-Micro-2.0/include/CodexV11Secrets.h
