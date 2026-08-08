@@ -1032,7 +1032,7 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
                      bool charging) {
   lv_obj_set_style_bg_color(
       connectionDot,
-      lv_color_hex(state.companionReady ? 0x00E0D0 : 0xE7A93B), 0);
+      lv_color_hex(state.bleConnected ? 0x00E0D0 : 0xE7A93B), 0);
 
   if (micRecording) {
     lv_obj_set_style_arc_color(usageArc, lv_color_hex(activePrimary),
@@ -1141,7 +1141,7 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
     }
   } else {
     lv_obj_set_style_text_font(usageLabel, &lv_font_codex_ui_16, 0);
-    if (state.companionReady) {
+    if (state.bleConnected) {
       lv_label_set_text(usageLabel, "未同步额度");
       lv_label_set_text(resetLabel, "等待额度");
     } else {
