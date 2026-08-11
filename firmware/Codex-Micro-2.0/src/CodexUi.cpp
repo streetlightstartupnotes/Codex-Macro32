@@ -64,6 +64,7 @@ bool commandPage = false;
 bool joystickPage = false;
 bool pairResetTriggered = false;
 bool micRecording = false;
+bool centerReleaseHandled = false;
 uint32_t centerPressedAt = 0;
 uint8_t centerLongPressStage = 0;
 bool ignoreNextNavCenterClick = false;
@@ -467,6 +468,7 @@ void updateCenterPreview(uint8_t stage, uint32_t heldMs) {
 void centerEvent(lv_event_t* event) {
   const lv_event_code_t code = lv_event_get_code(event);
   if (code == LV_EVENT_PRESSED) {
+    centerReleaseHandled = false;
     markInteraction();
     animateZoom(usageArc, 248, 80);
   }
@@ -518,17 +520,22 @@ void centerEvent(lv_event_t* event) {
     if (commandPage) {
       setCommandPage(false, false);
       centerLongPressStage = 0;
+      centerReleaseHandled = true;
       return;
     }
     // A press inside the joystick page returns home.
     if (joystickPage) {
       setJoystickPage(false, false);
       centerLongPressStage = 0;
+      centerReleaseHandled = true;
       return;
     }
 
     setReconnectLayout(false);
     if (centerLongPressStage == 0) {
+      // A short tap on the home center sends the current Codex input.
+      sendMomentary("ACT12");
+      centerReleaseHandled = true;
       return;
     }
 
@@ -555,9 +562,18 @@ void centerEvent(lv_event_t* event) {
         break;
     }
     centerLongPressStage = 0;
+    centerReleaseHandled = true;
   } else if (code == LV_EVENT_PRESS_LOST && !pairResetTriggered) {
     setReconnectLayout(false);
     centerLongPressStage = 0;
+    centerReleaseHandled = true;
+  } else if (code == LV_EVENT_CLICKED && !centerReleaseHandled &&
+             !micRecording && !commandPage && !joystickPage &&
+             centerLongPressStage == 0) {
+    // Some touch-controller paths emit CLICKED without a reliable RELEASED.
+    // Keep the fallback idempotent so a normal tap sends exactly once.
+    sendMomentary("ACT12");
+    centerReleaseHandled = true;
   }
 }
 
