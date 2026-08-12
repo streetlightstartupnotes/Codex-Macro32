@@ -1,4 +1,4 @@
-# Codex Micro 3.0 Preview for Waveshare ESP32-S3-Touch-LCD-1.85B
+# Codex Macro32 V3 for Waveshare ESP32-S3-Touch-LCD-1.85B
 
 > 当前公开版本仅适用于 macOS。项目发布与维护：路灯同学创业笔记（https://github.com/streetlightstartupnotes）。
 
@@ -10,32 +10,38 @@ Codex Micro 控制器。项目使用 Vendor HID 兼容协议，不是普通键�
 | 入口 | 内容 | 适合场景 |
 | --- | --- | --- |
 | `flash.command` | 检查代码、从当前源码构建并上传 | 推荐安装方式 |
-| `waveshare-1_85b` | PlatformIO 构建环境，保留 USB Serial/JTAG，HID 走 BLE | 手动构建、调试与上传 |
+| `usb-mic/waveshare-1_85b-usb-mic` | V3 默认发布构建：BLE 控制 + USB Audio 麦克风 | 日常使用 |
+| `waveshare-1_85b` | 保留 USB Serial/JTAG 的恢复/调试构建，HID 走 BLE | 串口诊断与恢复 |
 
-USB Vendor HID 已移除。USB 只用于供电、USB Serial/JTAG 串口和刷写；所有 Codex
-控制命令、状态与 Companion 数据只走 BLE。
+USB Vendor HID 已移除。所有 Codex 控制命令、状态与 Companion 数据只走 BLE；V3
+默认构建把同一根数据线用于供电/充电和输入型 USB Audio 麦克风，并保留一个只用于
+免按键刷写复位的 CDC 维护串口；不暴露 USB 键盘、Vendor HID 或扬声器。
 
 ## 第三版边界
 
-本目录是独立于第二版的第三版开发分支。当前已加入中央额度数字缩小、中央圆环内
+本目录是独立于第二版的第三版。当前已加入中央额度数字缩小、中央圆环内
 电量图标与电量百分比，以及额度环绿色/黄色/红色分档。第二版目录保持原 UI，不随
 第三版变化。
 
-USB Audio 麦克风尚未在本硬件上完成，因此当前第三版仍只把 USB 用于供电、串口和
-刷写；设备麦克风继续用于本地录音波形。待独立 USB Audio 构建目标完成并实机验证后，
-才会把“插线后成为 Mac 麦克风”标记为已实现。
+USB Audio 构建使用板载 ES7210 双麦克风，向 macOS 提供名为 `Codex Macro32 Mic`
+的 48 kHz、16 位、单声道输入设备。它和 BLE Vendor HID 同时运行；Mac 正在请求麦克风
+流时，本地任务提示音自动让路，避免声音混入录音。
+
+项目自带 macOS Companion 默认监控这一标准设备名：插线后自动设为系统默认输入，
+拔线后恢复此前输入；连接期间手动换麦克风时不会被抢回。逻辑不写死作者路径、
+序列号或某台电脑，GUI、命令行与登录自启动方式均通用。
 
 ## 已实现功能
 
 - 360×360 首页以第一代稳定布局为基础，放大为 132 半径六键轨道、86 像素圆键、176 像素中央额度环，
-  保留原中央圆盘和纯黑背景；`1–6` 使用 16 像素字号，额度数字使用 48 像素字号，
+  保留原中央圆盘和纯黑背景；`1–6` 使用 16 像素字号，额度数字使用 40 像素字号，
   中文重置时间完整放在环内。
   仍显示 `1–6` 并保留真实状态整键填色，不恢复旧版 `A1–A6`、英文额度占位或滑动手势。
 - Agent 状态颜色填充整个圆形按钮，运行、完成、等待、错误、空闲和未分配可直接区分。
 - 点击 1–6 立即切换对应 Agent；长按单个 Agent 后，标题、工作区、状态和运行时间显示约 5 秒。
 - Agent 详情使用中文界面和专用中文字形；动态标题或工作区只要含有字库不支持的字符，
   整行直接隐藏，不显示 `?` 或方框。
-- 主页中央圆环采用按住时长选择模式：按住约 0.8s 进入六快捷键页，按住约 5s 进入
+- 主页中央圆环短点会发送当前输入。按住时长用于选择模式：按住约 0.8s 进入六快捷键页，按住约 5s 进入
   四向摇杆遥控页，按住约 10s 重新配对蓝牙，继续按到 20s 恢复出厂。界面出现后
   松手即确认进入该模式；在快捷页或摇杆页单击中央圆环返回主页。快捷页不会自动
   退出，只能单击中间退出；四向摇杆中点单击 1 次退出。
@@ -50,7 +56,8 @@ USB Audio 麦克风尚未在本硬件上完成，因此当前第三版仍只把 
   和异常状态使用不同提示音；需要外壳内已连接扬声器。
 - BQ27220 电量读取、BLE 电量上报和断线重新广播。设备通电期间屏幕保持稳定常亮，
   不再自动降亮度或熄屏；需要关闭时短按硬件 PWR 键关机。
-- 周额度快照写入 NVS，电脑暂时离线时仍可显示上次成功同步的数据。
+- 周额度快照写入 NVS。蓝牙断开、重配或尚未认证时固定显示“等待连接”，不会用历史
+  快照冒充在线；连接并认证但还没有有效额度时显示“未同步额度”。
 
 ### V1.1 companion
 
@@ -97,16 +104,23 @@ python3 -m pip install platformio
 ./flash.command /dev/cu.usbmodemNNN
 ```
 
-连接阶段若停住，按住 BOOT；出现写入进度后松开。公开仓库不附带预编译固件。
+刷入新版 V3 后，脚本可通过 CDC 维护串口自动让 S3 进入 ROM 下载器，无需按 BOOT。
+从不含维护串口的旧固件首次迁移时，仍需先让设备进入 ROM 下载模式。公开仓库不附带
+预编译固件。
 
-手动构建：
+默认 V3 USB 麦克风构建：
 
 ```sh
-pio run -e waveshare-1_85b
-pio run -e waveshare-1_85b -t upload \
-  --upload-port "$PORT"
-pio device monitor -p "$PORT" -b 115200
+cd usb-mic
+pio run
 ```
+
+首次构建必须运行这里的默认两阶段命令。第一阶段 `prepare-bluedroid` 生成兼容库，第二阶段
+才生成 USB 麦克风固件；不要在全新克隆中直接跳过第一阶段执行单独的 `-e` 环境。
+
+`flash.command` 会只把生成的应用固件写到 `0x10000`，保留 NVS、蓝牙绑定、额度缓存和
+Companion 设置。若只需 USB Serial/JTAG 调试，可在上一级目录运行
+`pio run -e waveshare-1_85b` 构建恢复/串口版。
 
 首次刷录后，在 macOS 蓝牙设置中配对 `Codex Micro`，重启 ChatGPT Desktop，并允许
 “输入监控”。随后在 ChatGPT 的 `Settings > Codex Micro` 配置 Agent、Command 和
@@ -133,8 +147,9 @@ cd companion
 companion/.venv/bin/python companion/codex_usage_bridge.py --interval 600
 ```
 
-GUI、命令行 bridge 和登录自启动脚本不要同时运行，以免多个进程争用同一 GATT
-连接。更详细的安装、设置、数据来源和协议说明见
+GUI、命令行 bridge 和登录自启动脚本共用一个进程锁。同一时间只有一个实例会控制
+BLE 和默认麦克风；后启动的实例会明确显示占用状态并停止。更详细的安装、设置、
+数据来源和协议说明见
 [`companion/README.md`](companion/README.md)。
 
 Bridge 只通过 CoreBluetooth 的 `retrieveConnectedPeripheralsWithServices` 查询
@@ -143,8 +158,8 @@ macOS 已连接外设，不调用扫描 API。设备未连接时，它不会启�
 
 ## 安全启用 Wi-Fi OTA
 
-默认 V1 构建不包含 OTA；V1.1 USB 环境虽编入 OTA 代码，但仓库和默认构建产物没有
-Wi-Fi/OTA 凭据，因此不会连接 Wi-Fi，也不会开放 OTA 端口。需要显式启用时：
+默认 V3 构建没有启用 OTA。仓库和默认构建产物不包含 Wi-Fi 或 OTA 凭据，因此不会
+连接 Wi-Fi，也不会开放 OTA 端口。需要自行修改构建开关并显式启用时：
 
 ```sh
 cp include/CodexV11Secrets.example.h include/CodexV11Secrets.h
@@ -168,6 +183,7 @@ cp include/CodexV11Secrets.example.h include/CodexV11Secrets.h
 | --- | --- |
 | 点击 1–6 | 立即切换对应 Agent |
 | 长按 1–6 | 显示该 Agent 的详情约 5 秒 |
+| 中央圆环短点 | 发送当前输入 |
 | 中央圆环按住约 0.8s | 进入六快捷键页 |
 | 中央圆环按住约 5s | 进入四向摇杆遥控页 |
 | 中央圆环按住约 10s | 断开并重新配对蓝牙 |
@@ -190,8 +206,11 @@ cp include/CodexV11Secrets.example.h include/CodexV11Secrets.h
 
 - 1.85B 的 PWR 键直接连接电源锁存芯片，不进入 ESP32 GPIO；可编程物理键只有
   BOOT（GPIO0）。因此 PWR 可执行硬件关机，但不能由固件改造成单独的屏幕休眠键。
-- 板载麦克风只用于驱动屏幕实时波形，没有通过本固件上传音频；PTT 仍使用电脑
-  麦克风。
+- 默认 V3 构建把板载麦克风作为 `Codex Macro32 Mic` 上传到 Mac；应用需要在声音输入
+  设置中选择它。恢复/串口版不提供 USB Audio。
+- 默认 V3 同时显示 `Codex Macro32 Mic` 和一个 CDC 维护串口；维护串口不承载 Codex
+  控制或额度数据，只允许刷写工具通过 1200 波特触发让 S3 自动进入 ROM 下载器。
+  从不含维护串口的旧固件首次迁移时，仍需先进入一次 ROM 下载模式。
 - 提示音需要硬件已连接扬声器；QMI8658 缺失时运动功能会自动停用。
 - 固件依赖未公开的 Codex Micro Vendor HID 协议，ChatGPT Desktop 更新后可能需要
   调整。当前仅支持 macOS，Windows 与 Linux 尚未适配和测试。

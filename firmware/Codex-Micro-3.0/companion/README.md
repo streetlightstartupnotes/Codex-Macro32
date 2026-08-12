@@ -1,4 +1,4 @@
-# Codex Micro Companion 1.1
+# Codex Macro32 Companion 1.1
 
 Companion 是 macOS 上的轻量 BLE bridge。它把 Codex 周额度、最近任务元数据和声音
 设置写入现有的加密 companion GATT characteristic；不读取或保存 Codex 账号密码、
@@ -19,6 +19,7 @@ cd companion
 - 周额度显示；
 - 同步间隔，建议使用 300–600 秒（5–10 分钟），默认 300 秒；
 - 完成提示音开关；
+- “插线自动选择设备麦克风”开关，默认开启；
 - 最近六个 Agent/任务的标题、工作区、状态、创建时间和更新时间预览；
 - 完整工作目录查看和“立即同步”。
 
@@ -32,9 +33,19 @@ V1.1 固件会接收同步间隔与声音设置。设备界面固定使用青蓝
 不提供主题选择或隐藏换色手势；声音开关控制设备提示音。
 设备翻面静音是独立保护条件：声音开关开启但设备仍朝下时，依然保持静音。
 
+### 有线麦克风自动选择
+
+这是项目自带 Companion 的通用 macOS 功能，不包含作者电脑路径、设备序列号或用户
+账号信息：检测到标准设备名 `Codex Macro32 Mic` 新接入后，将它设为系统默认输入；
+拔出、关闭开关或退出 Companion 后恢复此前输入。如果用户在连接期间手动选择其他
+麦克风，Companion 尊重该选择，不再抢回。
+
+USB 固件只能向 macOS 声明自己是麦克风，不能越过操作系统直接修改默认输入，因此
+自动选择由项目自带 Companion 完成。GUI、命令行 bridge 和登录自启动方式均适用。
+
 ## 命令行运行
 
-从项目根目录运行自动准备环境的脚本：
+从 V3 固件目录运行自动准备环境的脚本：
 
 ```sh
 ./run-usage-bridge.command
@@ -54,13 +65,15 @@ python3 -m venv .venv
 ```text
 --interval 600             每 10 分钟同步
 --silent                  关闭完成提示音
+--no-auto-usb-mic        不自动修改 macOS 默认输入
 --device "Codex Micro"    指定设备名
 --codex /path/to/codex    指定 Codex 可执行文件
 ```
 
-GUI、CLI bridge 和 `install-usage-bridge.command` 安装的登录自启动实例不要同时运行，
-否则多个进程可能争用同一 BLE GATT 连接。登录自启动使用 CLI 默认设置，不读取 GUI
-设置文件。
+GUI、CLI bridge 和 `install-usage-bridge.command` 安装的登录自启动实例共用一个
+跨进程锁。同一时间只有一个实例能控制 BLE 和默认麦克风；后启动的实例会显示
+“已有 Companion 正在运行”并停止，不会争用 GATT。登录自启动使用 CLI 默认设置，
+不读取 GUI 设置文件，因此默认会自动选择 USB 麦克风。
 
 ## 连接与空闲行为
 
@@ -138,6 +151,8 @@ UTF-8 和紧凑分隔符；单包最多 180 字节，以适配 macOS 常见的 1
 
 - GUI 一直显示等待：先在 macOS 蓝牙设置完成配对，并让 ChatGPT Desktop 建立连接；
   bridge 不会自行扫描或配对。
+- GUI 显示已有 Companion 正在运行：电脑上已经有 GUI、CLI 或登录自启实例。保留其中
+  一种启动方式即可；进程异常退出后，系统会自动释放锁，不需要手动删除锁文件。
 - 所有任务状态均为“不可用”：这是独立 app-server 返回 `notLoaded` 时的预期降级，
   不代表任务已停止。
 - 标题和额度为空：查看 GUI 底部错误或 CLI 标准错误输出，确认当前 Codex 可执行文件

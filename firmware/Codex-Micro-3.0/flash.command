@@ -1,9 +1,17 @@
 #!/bin/zsh
 set -eu
 
-cd "${0:A:h}"
+PROJECT_DIR="${0:A:h}"
+cd "$PROJECT_DIR"
 
-if command -v pio >/dev/null 2>&1; then
+LOCAL_PIO_PYTHON="$PROJECT_DIR/usb-mic/.pio-core/penv/bin/python"
+LOCAL_PLATFORMIO="$PROJECT_DIR/usb-mic/.pio-core/penv/bin/platformio"
+if [[ -x "$LOCAL_PLATFORMIO" ]]; then
+  PIO=("$LOCAL_PLATFORMIO")
+elif [[ -x "$LOCAL_PIO_PYTHON" ]] &&
+    "$LOCAL_PIO_PYTHON" -m platformio --version >/dev/null 2>&1; then
+  PIO=("$LOCAL_PIO_PYTHON" -m platformio)
+elif command -v pio >/dev/null 2>&1; then
   PIO=(pio)
 elif python3 -m platformio --version >/dev/null 2>&1; then
   PIO=(python3 -m platformio)
@@ -12,22 +20,39 @@ else
   exit 1
 fi
 
-PORT="${1:-}"
-if [[ -z "$PORT" ]]; then
-  ports=(/dev/cu.usbmodem*(N) /dev/cu.SLAB_USBtoUART*(N) /dev/cu.wchusbserial*(N))
-  if (( ${#ports[@]} != 1 )); then
-    echo "Could not select one serial device automatically."
-    echo "Usage: ./flash.command /dev/cu.your-device"
-    (( ${#ports[@]} > 0 )) && printf 'Detected: %s\n' "${ports[@]}"
-    exit 1
-  fi
-  PORT="${ports[1]}"
-fi
+REQUESTED_PORT="${1:-}"
 
 echo "Running regression checks..."
 ./scripts/check-regressions.sh
-echo "Building Codex Micro 3.0 Preview from source..."
-"${PIO[@]}" run -e waveshare-1_85b
-echo "Uploading to $PORT. Hold BOOT if the connection waits."
-"${PIO[@]}" run -e waveshare-1_85b -t upload --upload-port "$PORT"
-echo "Build and upload complete."
+echo "Building Codex Macro32 V3 with USB microphone support..."
+(
+  cd usb-mic
+  "${PIO[@]}" run
+)
+APP_BIN="$PROJECT_DIR/usb-mic/.pio/build/waveshare-1_85b-usb-mic/firmware.bin"
+ESPTOOL_PACKAGE="$PROJECT_DIR/usb-mic/.pio-core/packages/tool-esptoolpy"
+PIO_INFO=$(
+  cd "$PROJECT_DIR/usb-mic"
+  "${PIO[@]}" system info --json-output
+)
+PIO_PYTHON=$(python3 -c \
+  'import json, sys; print(json.load(sys.stdin)["python_exe"]["value"])' \
+  <<< "$PIO_INFO")
+if [[ ! -x "$PIO_PYTHON" || ! -d "$ESPTOOL_PACKAGE" ]]; then
+  echo "The USB microphone build did not prepare its local flashing tools."
+  exit 1
+fi
+if [[ -n "$REQUESTED_PORT" ]]; then
+  PORT_INFO=$("$PIO_PYTHON" "$PROJECT_DIR/scripts/prepare-flash-port.py" "$REQUESTED_PORT")
+else
+  PORT_INFO=$("$PIO_PYTHON" "$PROJECT_DIR/scripts/prepare-flash-port.py")
+fi
+PORT="${PORT_INFO%%|*}"
+BEFORE="${PORT_INFO##*|}"
+echo "Writing only the application partition on $PORT."
+echo "NVS, BLE bonds, cached quota and companion settings are preserved."
+PYTHONPATH="$ESPTOOL_PACKAGE" "$PIO_PYTHON" -m esptool \
+  --chip esp32s3 --port "$PORT" --baud 921600 --before "$BEFORE" \
+  --after watchdog-reset \
+  write-flash 0x10000 "$APP_BIN"
+echo "V3 USB microphone build and application-only upload complete."

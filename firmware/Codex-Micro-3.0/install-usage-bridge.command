@@ -13,6 +13,8 @@ PLIST_PATH="$AGENT_DIR/$LABEL.plist"
 launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
 mkdir -p "$COMPANION_DIR" "$AGENT_DIR" "$LOG_DIR"
 cp "$SOURCE_COMPANION_DIR/codex_usage_bridge.py" "$COMPANION_DIR/codex_usage_bridge.py"
+cp "$SOURCE_COMPANION_DIR/mac_audio_input.py" "$COMPANION_DIR/mac_audio_input.py"
+cp "$SOURCE_COMPANION_DIR/process_lock.py" "$COMPANION_DIR/process_lock.py"
 cp "$SOURCE_COMPANION_DIR/requirements.txt" "$COMPANION_DIR/requirements.txt"
 
 cd "$COMPANION_DIR"

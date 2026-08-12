@@ -5,11 +5,13 @@
 #include <Wire.h>
 #include <cmath>
 
+#include "es7210.h"
 #include "es8311.h"
+#include "UsbMic.h"
 
 namespace {
 
-constexpr int kSampleRate = 24000;
+constexpr int kSampleRate = 48000;
 constexpr int kMclk = kSampleRate * 256;
 constexpr int kBclkPin = 48;
 constexpr int kLrclkPin = 38;
@@ -23,8 +25,9 @@ I2SClass audioI2s;
 }  // namespace
 
 bool AudioFeedback::begin() {
-  es8311_handle_t codec = es8311_create(I2C_NUM_0, ES8311_ADDRESS_0);
-  if (codec == nullptr) {
+  es8311_handle_t outputCodec =
+      es8311_create(I2C_NUM_0, ES8311_ADDRESS_0);
+  if (outputCodec == nullptr) {
     Serial.println("ES8311 not found; sound disabled");
     return false;
   }
@@ -35,30 +38,41 @@ bool AudioFeedback::begin() {
       .mclk_frequency = kMclk,
       .sample_frequency = kSampleRate,
   };
-  if (es8311_init(codec, &clock, ES8311_RESOLUTION_16,
+  if (es8311_init(outputCodec, &clock, ES8311_RESOLUTION_16,
                   ES8311_RESOLUTION_16) != ESP_OK) {
     Serial.println("ES8311 initialization failed; sound disabled");
     return false;
   }
-  if (es8311_voice_volume_set(codec, 65, nullptr) != ESP_OK) {
+  if (es8311_voice_volume_set(outputCodec, 65, nullptr) != ESP_OK) {
     Serial.println("ES8311 volume setup failed; sound disabled");
     return false;
   }
-  if (es8311_microphone_config(codec, false) != ESP_OK) {
-    Serial.println("ES8311 microphone setup failed; sound disabled");
+  if (!es7210_begin(kSampleRate)) {
+    Serial.println("ES7210 initialization failed; microphone disabled");
     return false;
   }
 
   audioI2s.setPins(kBclkPin, kLrclkPin, kDoutPin, kDinPin, kMclkPin);
+  audioI2s.setTimeout(1000);
   if (!audioI2s.begin(I2S_MODE_STD, kSampleRate, I2S_DATA_BIT_WIDTH_16BIT,
-                      I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT)) {
+                      I2S_SLOT_MODE_STEREO)) {
     Serial.println("I2S initialization failed; sound disabled");
+    return false;
+  }
+  // ES7210 supplies the two physical microphones in the left/right I2S
+  // slots. Average them in the I2S reader and expose a stable mono stream to
+  // the UI and macOS while leaving TX stereo for the ES8311 speaker path.
+  if (!audioI2s.configureRX(kSampleRate, I2S_DATA_BIT_WIDTH_16BIT,
+                            I2S_SLOT_MODE_STEREO,
+                            I2S_RX_TRANSFORM_16_STEREO_TO_MONO)) {
+    Serial.println("I2S microphone downmix setup failed; sound disabled");
     return false;
   }
   pinMode(kAmplifierPin, OUTPUT);
   digitalWrite(kAmplifierPin, muted_ ? LOW : HIGH);
   ready_ = true;
-  Serial.println("Audio ready: ES8311 + I2S + amplifier GPIO9");
+  Serial.println(
+      "Audio ready: ES8311 output + ES7210 dual mic + I2S + amplifier GPIO9");
   return true;
 }
 
@@ -75,18 +89,27 @@ bool AudioFeedback::muted() const { return muted_; }
 void AudioFeedback::tone(float hz, int durationMs, float amplitude) {
   if (!ready_ || muted_) return;
   constexpr size_t kChunk = 192;
-  int16_t samples[kChunk];
+  int16_t samples[kChunk * 2];
   const size_t total = static_cast<size_t>(kSampleRate * durationMs / 1000);
   size_t written = 0;
   while (written < total) {
+#if defined(CODEX_MACRO32_USB_MIC)
+    // If macOS starts recording during a task sound, stop at the next small
+    // PCM block so the local speaker does not leak into the USB microphone.
+    if (codex_usb_mic::streaming()) return;
+#endif
     const size_t count = min(kChunk, total - written);
     for (size_t i = 0; i < count; ++i) {
       const float phase = 2.0f * PI * hz * (written + i) / kSampleRate;
       const float edge = min(1.0f, min((written + i) / 120.0f,
                                        (total - written - i) / 120.0f));
-      samples[i] = static_cast<int16_t>(32767.0f * amplitude * edge * sinf(phase));
+      const int16_t sample = static_cast<int16_t>(
+          32767.0f * amplitude * edge * sinf(phase));
+      samples[i * 2] = sample;
+      samples[i * 2 + 1] = sample;
     }
-    audioI2s.write(reinterpret_cast<uint8_t*>(samples), count * sizeof(int16_t));
+    audioI2s.write(reinterpret_cast<uint8_t*>(samples),
+                   count * 2 * sizeof(int16_t));
     written += count;
   }
 }
@@ -145,16 +168,39 @@ void AudioFeedback::readyChime() {
 float AudioFeedback::microphoneLevel() {
   if (!ready_) return 0.0f;
 
+#if defined(CODEX_MACRO32_USB_MIC)
+  // The USB capture task is the sole I2S reader in V3. Reading here as well
+  // would steal samples from the Mac stream, so the UI consumes its envelope.
+  return microphoneEnvelope_;
+#else
+
   // Eight milliseconds is long enough for a stable energy estimate while
   // keeping the UI responsive. Removing the mean rejects codec DC offset.
-  constexpr size_t kSamples = 192;
+  constexpr size_t kSamples = 384;
   int16_t samples[kSamples];
   const size_t bytesRead = audioI2s.readBytes(
       reinterpret_cast<char*>(samples), sizeof(samples));
   const size_t sampleCount = bytesRead / sizeof(int16_t);
-  if (sampleCount < 16) {
+  updateMicrophoneEnvelope(samples, sampleCount);
+  return microphoneEnvelope_;
+#endif
+}
+
+size_t AudioFeedback::readMicrophoneSamples(int16_t* samples,
+                                            size_t sampleCount) {
+  if (!ready_ || samples == nullptr || sampleCount == 0) return 0;
+  const size_t bytesRead = audioI2s.readBytes(
+      reinterpret_cast<char*>(samples), sampleCount * sizeof(int16_t));
+  const size_t samplesRead = bytesRead / sizeof(int16_t);
+  updateMicrophoneEnvelope(samples, samplesRead);
+  return samplesRead;
+}
+
+void AudioFeedback::updateMicrophoneEnvelope(const int16_t* samples,
+                                              size_t sampleCount) {
+  if (samples == nullptr || sampleCount < 16) {
     microphoneEnvelope_ *= 0.82f;
-    return microphoneEnvelope_;
+    return;
   }
 
   int64_t sum = 0;
@@ -185,5 +231,4 @@ float AudioFeedback::microphoneLevel() {
 
   const float response = target > microphoneEnvelope_ ? 0.68f : 0.22f;
   microphoneEnvelope_ += (target - microphoneEnvelope_) * response;
-  return microphoneEnvelope_;
 }
