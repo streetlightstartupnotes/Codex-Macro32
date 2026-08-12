@@ -34,6 +34,8 @@ constexpr uint32_t kIce = 0xEAFBFF;
 constexpr uint32_t kDim = 0x174158;
 constexpr uint32_t kDimmer = 0x0B293B;
 constexpr uint32_t kRed = 0xFF4E67;
+constexpr uint32_t kGreen = 0x35E58A;
+constexpr uint32_t kYellow = 0xFFD166;
 
 CodexMicroBle* transport = nullptr;
 AudioFeedback* sound = nullptr;
@@ -49,6 +51,9 @@ lv_obj_t* resetLabel = nullptr;
 lv_obj_t* pageLabel = nullptr;
 lv_obj_t* recordTimeLabel = nullptr;
 lv_obj_t* batteryLabel = nullptr;
+lv_obj_t* batteryIcon = nullptr;
+lv_obj_t* batteryCap = nullptr;
+lv_obj_t* batteryFill = nullptr;
 lv_obj_t* detailTitleLabel = nullptr;
 lv_obj_t* detailMetaLabel = nullptr;
 lv_obj_t* waveform[kWaveBars] = {};
@@ -250,7 +255,30 @@ void setHomeUiHidden(bool hidden) {
     setObjectHidden(detailTitleLabel, true);
     setObjectHidden(detailMetaLabel, true);
     setObjectHidden(batteryLabel, true);
+    setObjectHidden(batteryIcon, true);
+    setObjectHidden(batteryCap, true);
+    setObjectHidden(batteryFill, true);
   }
+}
+
+uint32_t quotaAccent(int weeklyLeft) {
+  if (weeklyLeft >= 50) return kGreen;
+  if (weeklyLeft >= 20) return kYellow;
+  return kRed;
+}
+
+void updateBatteryVisual(int batteryPercent, bool charging) {
+  const int value = constrain(batteryPercent, 0, 100);
+  lv_obj_set_style_border_color(batteryIcon,
+                                lv_color_hex(charging ? kCyan : kDim), 0);
+  lv_obj_set_style_bg_color(batteryCap,
+                            lv_color_hex(charging ? kCyan : kDim), 0);
+  lv_obj_set_style_bg_color(batteryFill,
+                            lv_color_hex(value <= 15 ? kRed : kCyan), 0);
+  lv_obj_set_width(batteryFill, max(2, (value * 28) / 100));
+  char text[8];
+  snprintf(text, sizeof(text), "%d%%", value);
+  lv_label_set_text(batteryLabel, text);
 }
 
 void setJoystickUiHidden(bool hidden) {
@@ -934,7 +962,41 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
 
   batteryLabel = makeLabel(screen, "", &lv_font_montserrat_12,
                            lv_color_hex(0xD6E0F5));
-  lv_obj_add_flag(batteryLabel, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_align(batteryLabel, LV_ALIGN_CENTER, 0, 77);
+  lv_obj_set_style_text_align(batteryLabel, LV_TEXT_ALIGN_CENTER, 0);
+
+  batteryIcon = lv_obj_create(screen);
+  lv_obj_remove_style_all(batteryIcon);
+  lv_obj_set_size(batteryIcon, 32, 14);
+  lv_obj_set_pos(batteryIcon, 154, 60);
+  lv_obj_set_style_radius(batteryIcon, 3, 0);
+  lv_obj_set_style_bg_color(batteryIcon, lv_color_hex(0x061725), 0);
+  lv_obj_set_style_bg_opa(batteryIcon, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(batteryIcon, 1, 0);
+  lv_obj_set_style_border_color(batteryIcon, lv_color_hex(kDim), 0);
+  lv_obj_clear_flag(batteryIcon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+  batteryCap = lv_obj_create(screen);
+  lv_obj_remove_style_all(batteryCap);
+  lv_obj_set_size(batteryCap, 3, 6);
+  lv_obj_set_pos(batteryCap, 186, 64);
+  lv_obj_set_style_radius(batteryCap, 1, 0);
+  lv_obj_set_style_bg_color(batteryCap, lv_color_hex(kDim), 0);
+  lv_obj_set_style_bg_opa(batteryCap, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(batteryCap, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+  batteryFill = lv_obj_create(screen);
+  lv_obj_remove_style_all(batteryFill);
+  lv_obj_set_size(batteryFill, 28, 10);
+  lv_obj_set_pos(batteryFill, 156, 62);
+  lv_obj_set_style_radius(batteryFill, 2, 0);
+  lv_obj_set_style_bg_color(batteryFill, lv_color_hex(kCyan), 0);
+  lv_obj_set_style_bg_opa(batteryFill, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(batteryFill, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  setObjectHidden(batteryLabel, true);
+  setObjectHidden(batteryIcon, true);
+  setObjectHidden(batteryCap, true);
+  setObjectHidden(batteryFill, true);
 
   navRing = lv_arc_create(screen);
   lv_obj_remove_style_all(navRing);
@@ -1012,6 +1074,9 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
   lv_obj_move_foreground(detailTitleLabel);
   lv_obj_move_foreground(detailMetaLabel);
   lv_obj_move_foreground(connectionDot);
+  lv_obj_move_foreground(batteryIcon);
+  lv_obj_move_foreground(batteryCap);
+  lv_obj_move_foreground(batteryFill);
   lv_obj_move_foreground(batteryLabel);
 
   lv_timer_create(inputTimer, 20, nullptr);
@@ -1049,6 +1114,7 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
   lv_obj_set_style_bg_color(
       connectionDot,
       lv_color_hex(state.bleConnected ? 0x00E0D0 : 0xE7A93B), 0);
+  updateBatteryVisual(batteryPercent, charging);
 
   if (micRecording) {
     lv_obj_set_style_arc_color(usageArc, lv_color_hex(activePrimary),
@@ -1058,20 +1124,35 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
           waveform[i], lv_color_hex(i % 2 ? activePrimary : activeSecondary), 0);
       lv_obj_set_style_shadow_color(waveform[i], lv_color_hex(activePrimary), 0);
     }
-    lv_obj_add_flag(batteryLabel, LV_OBJ_FLAG_HIDDEN);
+    setObjectHidden(batteryLabel, true);
+    setObjectHidden(batteryIcon, true);
+    setObjectHidden(batteryCap, true);
+    setObjectHidden(batteryFill, true);
     return;
   }
 
   if (joystickPage) {
-    lv_obj_add_flag(batteryLabel, LV_OBJ_FLAG_HIDDEN);
+    setObjectHidden(batteryLabel, true);
+    setObjectHidden(batteryIcon, true);
+    setObjectHidden(batteryCap, true);
+    setObjectHidden(batteryFill, true);
     return;
   }
 
-  lv_obj_add_flag(batteryLabel, LV_OBJ_FLAG_HIDDEN);
+  setObjectHidden(batteryLabel, false);
+  setObjectHidden(batteryIcon, false);
+  setObjectHidden(batteryCap, false);
+  setObjectHidden(batteryFill, false);
 
   updateAgentVisuals(state);
 
-  if (commandPage || centerLongPressStage > 0) return;
+  if (commandPage || centerLongPressStage > 0) {
+    setObjectHidden(batteryLabel, true);
+    setObjectHidden(batteryIcon, true);
+    setObjectHidden(batteryCap, true);
+    setObjectHidden(batteryFill, true);
+    return;
+  }
 
   if (detailAgent >= 0 && millis() < detailUntil) {
     const ThreadLight& light = state.threads[detailAgent];
@@ -1081,6 +1162,10 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
     snprintf(agent, sizeof(agent), "%d", detailAgent + 1);
     lv_label_set_text(pageLabel, agent);
     lv_obj_add_flag(usageLabel, LV_OBJ_FLAG_HIDDEN);
+    setObjectHidden(batteryLabel, true);
+    setObjectHidden(batteryIcon, true);
+    setObjectHidden(batteryCap, true);
+    setObjectHidden(batteryFill, true);
     const String safeTitle = safeTextForDisplay(metadata.title, "");
     const String safeWorkspace = safeTextForDisplay(metadata.workspace, "");
     if (renderedDetailAgent != detailAgent ||
@@ -1140,12 +1225,14 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
   lv_obj_set_style_arc_width(usageArc, 10, LV_PART_INDICATOR);
 
   if (state.weeklyLeft >= 0) {
-    lv_obj_set_style_text_font(usageLabel, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(usageLabel, &lv_font_montserrat_32, 0);
     lv_obj_clear_flag(usageLabel, LV_OBJ_FLAG_HIDDEN);
     char usage[8];
     snprintf(usage, sizeof(usage), "%d%%", state.weeklyLeft);
     lv_label_set_text(usageLabel, usage);
     lv_arc_set_value(usageArc, state.weeklyLeft);
+    lv_obj_set_style_arc_color(usageArc, lv_color_hex(quotaAccent(state.weeklyLeft)),
+                               LV_PART_INDICATOR);
     if (state.resetSeconds >= 0) {
       const int days = state.resetSeconds / 86400;
       const int hours = (state.resetSeconds % 86400) / 3600;
@@ -1165,5 +1252,7 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
       lv_label_set_text(resetLabel, "");
     }
     lv_arc_set_value(usageArc, 0);
+    lv_obj_set_style_arc_color(usageArc, lv_color_hex(kCyan),
+                               LV_PART_INDICATOR);
   }
 }
