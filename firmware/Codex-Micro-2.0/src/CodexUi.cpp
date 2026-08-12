@@ -924,7 +924,7 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
 
   resetLabel = makeLabel(screen, "", &lv_font_codex_ui_16,
                          lv_color_hex(0xAAB6D0));
-  lv_obj_align(resetLabel, LV_ALIGN_CENTER, 0, 32);
+  lv_obj_align(resetLabel, LV_ALIGN_CENTER, 0, 43);
 
   recordTimeLabel = makeLabel(screen, "录音  00:00", &lv_font_codex_ui_16,
                               lv_color_hex(kIce));
@@ -962,13 +962,13 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
 
   batteryLabel = makeLabel(screen, "", &lv_font_montserrat_12,
                            lv_color_hex(0xD6E0F5));
-  lv_obj_align(batteryLabel, LV_ALIGN_CENTER, 43, 57);
+  lv_obj_align(batteryLabel, LV_ALIGN_CENTER, 0, 77);
   lv_obj_set_style_text_align(batteryLabel, LV_TEXT_ALIGN_CENTER, 0);
 
   batteryIcon = lv_obj_create(screen);
   lv_obj_remove_style_all(batteryIcon);
   lv_obj_set_size(batteryIcon, 32, 14);
-  lv_obj_set_pos(batteryIcon, 150, 226);
+  lv_obj_set_pos(batteryIcon, 154, 60);
   lv_obj_set_style_radius(batteryIcon, 3, 0);
   lv_obj_set_style_bg_color(batteryIcon, lv_color_hex(0x061725), 0);
   lv_obj_set_style_bg_opa(batteryIcon, LV_OPA_COVER, 0);
@@ -979,7 +979,7 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
   batteryCap = lv_obj_create(screen);
   lv_obj_remove_style_all(batteryCap);
   lv_obj_set_size(batteryCap, 3, 6);
-  lv_obj_set_pos(batteryCap, 182, 230);
+  lv_obj_set_pos(batteryCap, 186, 64);
   lv_obj_set_style_radius(batteryCap, 1, 0);
   lv_obj_set_style_bg_color(batteryCap, lv_color_hex(kDim), 0);
   lv_obj_set_style_bg_opa(batteryCap, LV_OPA_COVER, 0);
@@ -988,7 +988,7 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
   batteryFill = lv_obj_create(screen);
   lv_obj_remove_style_all(batteryFill);
   lv_obj_set_size(batteryFill, 28, 10);
-  lv_obj_set_pos(batteryFill, 152, 228);
+  lv_obj_set_pos(batteryFill, 156, 62);
   lv_obj_set_style_radius(batteryFill, 2, 0);
   lv_obj_set_style_bg_color(batteryFill, lv_color_hex(kCyan), 0);
   lv_obj_set_style_bg_opa(batteryFill, LV_OPA_COVER, 0);
