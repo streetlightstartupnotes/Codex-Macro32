@@ -15,6 +15,7 @@
 #include "I2C_Driver.h"
 #include "LvglPort.h"
 #include "Qmi8658.h"
+#include "UsbMic.h"
 
 namespace {
 
@@ -76,6 +77,15 @@ bool faceDownMuted = false;
 bool companionSoundEnabled = true;
 CodexMicroState previousState;
 ImuInteractionState imuState;
+
+enum class PendingAlert : uint8_t {
+  None = 0,
+  Completion = 1,
+  Approval = 2,
+  Error = 3,
+};
+
+PendingAlert pendingAlert = PendingAlert::None;
 
 void applyAudioMute() {
   const bool shouldMute = faceDownMuted || !companionSoundEnabled;
@@ -377,29 +387,50 @@ void handleRecordingStartRequest() {
 }
 
 void checkStateTransitions(const CodexMicroState& state) {
-  if (!state.connected || !previousState.connected) return;
-
-  bool newComplete = false;
   bool playCompletion = false;
   bool playApproval = false;
   bool playError = false;
-  for (size_t i = 0; i < state.threads.size(); ++i) {
-    const ThreadLight& before = previousState.threads[i];
-    const ThreadLight& after = state.threads[i];
-    const bool enteredComplete = greenDominant(after) && !greenDominant(before);
-    newComplete = newComplete || enteredComplete;
-    playCompletion = playCompletion || enteredComplete;
-    playApproval = playApproval ||
-                   (yellowDominant(after) && !yellowDominant(before));
-    playError = playError || (redDominant(after) && !redDominant(before));
+  if (state.connected && previousState.connected) {
+    for (size_t i = 0; i < state.threads.size(); ++i) {
+      const ThreadLight& before = previousState.threads[i];
+      const ThreadLight& after = state.threads[i];
+      const bool enteredComplete =
+          greenDominant(after) && !greenDominant(before);
+      playCompletion = playCompletion || enteredComplete;
+      playApproval = playApproval ||
+                     (yellowDominant(after) && !yellowDominant(before));
+      playError = playError || (redDominant(after) && !redDominant(before));
+    }
   }
 
-  if (newComplete || playApproval || playError) wakeDisplay();
+  PendingAlert detected = PendingAlert::None;
   if (playError) {
-    audio.errorAlert();
+    detected = PendingAlert::Error;
   } else if (playApproval) {
-    audio.approvalAlert();
+    detected = PendingAlert::Approval;
   } else if (playCompletion) {
+    detected = PendingAlert::Completion;
+  }
+  if (detected != PendingAlert::None) {
+    wakeDisplay();
+    if (static_cast<uint8_t>(detected) >
+        static_cast<uint8_t>(pendingAlert)) {
+      pendingAlert = detected;
+    }
+  }
+
+  // The ES8311 speaker and ES7210 microphones share the I2S clock. A task
+  // sound while macOS records could enter the USB stream. Preserve the
+  // highest-priority event and play it after the host releases the microphone.
+  if (codex_usb_mic::streaming()) return;
+
+  const PendingAlert alert = pendingAlert;
+  pendingAlert = PendingAlert::None;
+  if (alert == PendingAlert::Error) {
+    audio.errorAlert();
+  } else if (alert == PendingAlert::Approval) {
+    audio.approvalAlert();
+  } else if (alert == PendingAlert::Completion) {
     audio.completionChime();
   }
 }
@@ -440,7 +471,13 @@ void setup() {
 
   if (audioReady && !audio.muted()) audio.readyChime();
 
-  Serial.println("CODEX_MICRO_185B_READY");
+#if defined(CODEX_MACRO32_USB_MIC)
+  if (!codex_usb_mic::begin(&audio)) {
+    Serial.println("USB_MIC_FAILED");
+  }
+#endif
+
+  Serial.println("CODEX_MACRO32_V3_READY");
 }
 
 void loop() {

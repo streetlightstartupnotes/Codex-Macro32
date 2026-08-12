@@ -22,7 +22,7 @@ volatile bool bleTransportConnected = false;
 
 constexpr char kDeviceName[] = "Codex Micro";
 constexpr char kManufacturer[] = "Work Louder";
-constexpr char kFirmwareVersion[] = "1.1.0-waveshare-1.85b";
+constexpr char kFirmwareVersion[] = "3.0.0-waveshare-1.85b";
 constexpr char kCompanionServiceUuid[] = "df2b7c00-76b6-4b6c-a8c7-c653e4342010";
 constexpr char kCompanionCharacteristicUuid[] = "df2b7c01-76b6-4b6c-a8c7-c653e4342010";
 constexpr size_t kPayloadSize = 61;
@@ -82,18 +82,24 @@ const uint8_t kReportMap[] = {
     0xC0                     // End Collection
 };
 
-class SecurityCallbacks final : public BLESecurityCallbacks {
+}  // namespace
+
+class CodexMicroBle::SecurityCallbacks final : public BLESecurityCallbacks {
  public:
+  explicit SecurityCallbacks(CodexMicroBle& owner) : owner_(owner) {}
+
   bool onSecurityRequest() override { return true; }
   uint32_t onPassKeyRequest() override { return 0; }
   void onPassKeyNotify(uint32_t) override {}
   bool onConfirmPIN(uint32_t) override { return true; }
   void onAuthenticationComplete(esp_ble_auth_cmpl_t result) override {
+    owner_.onAuthenticationComplete(result.success);
     Serial.printf("BLE pairing %s\n", result.success ? "complete" : "failed");
   }
-};
 
-}  // namespace
+ private:
+  CodexMicroBle& owner_;
+};
 
 class CodexMicroBle::ServerCallbacks final : public BLEServerCallbacks {
  public:
@@ -157,7 +163,7 @@ void CodexMicroBle::begin() {
   wifiOta.begin(shortId_);
 
   BLEDevice::init(kDeviceName);
-  BLEDevice::setSecurityCallbacks(new SecurityCallbacks());
+  BLEDevice::setSecurityCallbacks(new SecurityCallbacks(*this));
 
   auto* security = new BLESecurity();
   security->setCapability(ESP_IO_CAP_NONE);
@@ -238,6 +244,19 @@ void CodexMicroBle::reopenAdvertising() {
 
 void CodexMicroBle::requestRebond() {
   Serial.println("Re-pair: disconnect peers, clear bonds and restart advertising");
+
+  // The disconnect callback is asynchronous. Clear the visible connection
+  // state first so the UI cannot briefly present an unauthenticated link as a
+  // connected device while the old bond is being removed.
+  bleTransportConnected = false;
+  xSemaphoreTake(stateMutex_, portMAX_DELAY);
+  state_.connected = false;
+  state_.bleConnected = false;
+  state_.bleAuthenticated = false;
+  state_.companionReady = false;
+  state_.dirty = true;
+  xSemaphoreGive(stateMutex_);
+
   BLEDevice::stopAdvertising();
   if (server_ != nullptr) {
     const auto peers = server_->getPeerDevices(false);
@@ -377,14 +396,18 @@ void CodexMicroBle::onCompanionWrite(const uint8_t* data, size_t length) {
   if (!accepted) return;
 
   xSemaphoreTake(stateMutex_, portMAX_DELAY);
+  // An encrypted Companion write is also proof of authentication on stacks
+  // that do not emit another authentication callback when restoring a bond.
+  state_.bleAuthenticated = true;
   state_.companionReady = true;
   state_.dirty = true;
   xSemaphoreGive(stateMutex_);
 
-  if (companion_ != nullptr) {
-    companion_->setValue("{\"ok\":true,\"v\":11}");
-    companion_->notify();
-  }
+  // A GATT write-with-response already confirms every companion packet.
+  // Sending a notification from inside Bluedroid's write callback can race
+  // the following macOS packet and tear down an otherwise healthy bonded
+  // connection, especially when six metadata packets arrive back-to-back.
+  // Keep the readable value stable; the bridge does not require a second ACK.
   if (!usageAccepted && document["v"].as<int>() == 11) {
     Serial.println("Companion V1.1 metadata/config accepted");
   }
@@ -585,12 +608,23 @@ void CodexMicroBle::onConnected(bool connected) {
   state_.bleConnected = connected;
   state_.connected = connected;
   if (!connected || !wasBleConnected) {
+    state_.bleAuthenticated = false;
     state_.companionReady = false;
   }
   state_.dirty = true;
   xSemaphoreGive(stateMutex_);
   rpcBuffer_.clear();
   Serial.printf("BLE host %s\n", connected ? "connected" : "disconnected");
+}
+
+void CodexMicroBle::onAuthenticationComplete(bool success) {
+  xSemaphoreTake(stateMutex_, portMAX_DELAY);
+  state_.bleAuthenticated = success;
+  if (!success) {
+    state_.companionReady = false;
+  }
+  state_.dirty = true;
+  xSemaphoreGive(stateMutex_);
 }
 
 void CodexMicroBle::onOutput(const uint8_t* data, size_t length) {

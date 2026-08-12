@@ -1,2 +1,6 @@
 .pio/
+usb-mic/.pio-core/
+usb-mic/.dummy/
+usb-mic/CMakeLists.txt
+usb-mic/sdkconfig.defaults
 include/CodexV11Secrets.h

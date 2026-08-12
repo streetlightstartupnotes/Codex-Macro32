@@ -275,7 +275,7 @@ void updateBatteryVisual(int batteryPercent, bool charging) {
                             lv_color_hex(charging ? kCyan : kDim), 0);
   lv_obj_set_style_bg_color(batteryFill,
                             lv_color_hex(value <= 15 ? kRed : kCyan), 0);
-  lv_obj_set_width(batteryFill, max(2, (value * 28) / 100));
+  lv_obj_set_width(batteryFill, max(2, (value * 24) / 100));
   char text[8];
   snprintf(text, sizeof(text), "%d%%", value);
   lv_label_set_text(batteryLabel, text);
@@ -437,6 +437,9 @@ void setReconnectLayout(bool enabled) {
 
 void updateCenterPreview(uint8_t stage, uint32_t heldMs) {
   setReconnectLayout(false);
+  // Home may have selected the compact CJK font for "waiting" text. Every
+  // timed-mode preview is numeric, so restore its intended large font first.
+  lv_obj_set_style_text_font(usageLabel, &lv_font_montserrat_48, 0);
   switch (stage) {
     case 1:
       lv_label_set_text(pageLabel, "快捷操作");
@@ -962,13 +965,15 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
 
   batteryLabel = makeLabel(screen, "", &lv_font_montserrat_12,
                            lv_color_hex(0xD6E0F5));
-  lv_obj_align(batteryLabel, LV_ALIGN_CENTER, 43, 57);
+  // The complete icon + value row stays inside the 150 px central disk.
+  lv_obj_set_width(batteryLabel, 32);
+  lv_obj_align(batteryLabel, LV_ALIGN_CENTER, 22, 56);
   lv_obj_set_style_text_align(batteryLabel, LV_TEXT_ALIGN_CENTER, 0);
 
   batteryIcon = lv_obj_create(screen);
   lv_obj_remove_style_all(batteryIcon);
-  lv_obj_set_size(batteryIcon, 32, 14);
-  lv_obj_set_pos(batteryIcon, 150, 226);
+  lv_obj_set_size(batteryIcon, 28, 12);
+  lv_obj_set_pos(batteryIcon, 144, 230);
   lv_obj_set_style_radius(batteryIcon, 3, 0);
   lv_obj_set_style_bg_color(batteryIcon, lv_color_hex(0x061725), 0);
   lv_obj_set_style_bg_opa(batteryIcon, LV_OPA_COVER, 0);
@@ -979,7 +984,7 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
   batteryCap = lv_obj_create(screen);
   lv_obj_remove_style_all(batteryCap);
   lv_obj_set_size(batteryCap, 3, 6);
-  lv_obj_set_pos(batteryCap, 182, 230);
+  lv_obj_set_pos(batteryCap, 172, 233);
   lv_obj_set_style_radius(batteryCap, 1, 0);
   lv_obj_set_style_bg_color(batteryCap, lv_color_hex(kDim), 0);
   lv_obj_set_style_bg_opa(batteryCap, LV_OPA_COVER, 0);
@@ -987,8 +992,8 @@ void CodexUi::begin(CodexMicroBle* codex, AudioFeedback* audio) {
 
   batteryFill = lv_obj_create(screen);
   lv_obj_remove_style_all(batteryFill);
-  lv_obj_set_size(batteryFill, 28, 10);
-  lv_obj_set_pos(batteryFill, 152, 228);
+  lv_obj_set_size(batteryFill, 24, 8);
+  lv_obj_set_pos(batteryFill, 146, 232);
   lv_obj_set_style_radius(batteryFill, 2, 0);
   lv_obj_set_style_bg_color(batteryFill, lv_color_hex(kCyan), 0);
   lv_obj_set_style_bg_opa(batteryFill, LV_OPA_COVER, 0);
@@ -1224,8 +1229,20 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
                              LV_PART_INDICATOR);
   lv_obj_set_style_arc_width(usageArc, 10, LV_PART_INDICATOR);
 
-  if (state.weeklyLeft >= 0) {
-    lv_obj_set_style_text_font(usageLabel, &lv_font_montserrat_32, 0);
+  // Connection state has priority over cached quota. A physical BLE link can
+  // exist briefly during pairing, so do not call it connected until link
+  // authentication has completed.
+  if (!state.bleConnected || !state.bleAuthenticated) {
+    lv_obj_set_style_text_font(usageLabel, &lv_font_codex_ui_16, 0);
+    lv_label_set_text(usageLabel, "等待连接");
+    lv_label_set_text(resetLabel, "");
+    lv_arc_set_value(usageArc, 0);
+    lv_obj_set_style_arc_color(usageArc, lv_color_hex(kCyan),
+                               LV_PART_INDICATOR);
+  } else if (state.weeklyLeft >= 0) {
+    // V3 keeps the percentage prominent while leaving separate rows for the
+    // reset time and battery indicator inside the 150 px centre disk.
+    lv_obj_set_style_text_font(usageLabel, &lv_font_montserrat_40, 0);
     lv_obj_clear_flag(usageLabel, LV_OBJ_FLAG_HIDDEN);
     char usage[8];
     snprintf(usage, sizeof(usage), "%d%%", state.weeklyLeft);
@@ -1244,13 +1261,8 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
     }
   } else {
     lv_obj_set_style_text_font(usageLabel, &lv_font_codex_ui_16, 0);
-    if (state.bleConnected) {
-      lv_label_set_text(usageLabel, "未同步额度");
-      lv_label_set_text(resetLabel, "等待额度");
-    } else {
-      lv_label_set_text(usageLabel, "等待连接");
-      lv_label_set_text(resetLabel, "");
-    }
+    lv_label_set_text(usageLabel, "未同步额度");
+    lv_label_set_text(resetLabel, "等待额度");
     lv_arc_set_value(usageArc, 0);
     lv_obj_set_style_arc_color(usageArc, lv_color_hex(kCyan),
                                LV_PART_INDICATOR);

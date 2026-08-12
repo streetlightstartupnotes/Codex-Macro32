@@ -1,32 +1,84 @@
 # Codex Macro32
 
-把 Waveshare ESP32-S3-Touch-LCD-1.85B 圆屏开发板变成 Codex 桌面控制器，并通过 macOS Companion 同步额度和任务信息。
+Codex Macro32 把 Waveshare ESP32-S3-Touch-LCD-1.85B 圆屏开发板变成一台 Codex 桌面控制器。设备通过蓝牙控制 Codex、显示六个 Agent 的状态，并由 macOS Companion 同步周额度和任务信息。V3 插线后还能作为 Mac 的板载麦克风输入。
 
-> **当前仅适用于 macOS。** Windows 与 Linux 尚未适配、测试或提供支持。项目依赖 ChatGPT Desktop/Codex 当前的行为和非公开 Vendor HID 兼容协议，应用升级后可能需要同步调整。
+> 当前仅适用于 macOS。Windows 与 Linux 尚未适配和测试。项目依赖 ChatGPT Desktop/Codex 当前提供的兼容行为，应用升级后可能需要同步调整。
 
-## 项目内容
+## 当前版本
 
-| 目录 | 内容 | 使用说明 |
+推荐使用 [Codex Macro32 V3](docs/Codex-Micro-3.0-使用说明.md)。这一版已经包含
+
+- 六个 Agent 圆形按钮，状态颜色填充整颗按钮
+- 中央额度环、中文重置时间和环内电量显示
+- 绿色、黄色、红色三档额度颜色
+- 六快捷页和四向摇杆页
+- 独占录音波形页
+- 任务完成、等待处理、报错三种提示音，无普通按键音
+- 蓝牙重新配对和恢复出厂
+- `Codex Macro32 Mic` 48 kHz、16 位、单声道 USB 麦克风
+- 维护串口免按键升级，普通升级只写应用区
+
+V2 保持在已验证的稳定状态，V3 的 UI、USB 麦克风和连接逻辑不会回写到 V2。
+
+## 仓库目录
+
+| 目录 | 内容 | 文档 |
 | --- | --- | --- |
 | `firmware/Codex-Micro-1.0` | 第一代稳定固件源码 | [1.0 使用说明](docs/Codex-Micro-1.0-使用说明.md) |
-| `firmware/Codex-Micro-2.0` | 第二版稳定功能版：六 Agent、快捷操作、摇杆、录音波形与任务提示音 | [2.0 使用说明](docs/Codex-Micro-2.0-使用说明.md) |
-| `firmware/Codex-Micro-3.0` | 第三版开发预览：新中央 UI、电量显示、绿黄红额度环；USB 麦克风仍在开发 | [3.0 使用说明](docs/Codex-Micro-3.0-使用说明.md) |
-| `tools/Codex-Quota-Sync` | 独立的 macOS 额度同步工具 | [额度同步工具说明](docs/Codex-额度同步工具-使用说明.md) |
+| `firmware/Codex-Micro-2.0` | 第二版稳定功能版 | [2.0 使用说明](docs/Codex-Micro-2.0-使用说明.md) |
+| `firmware/Codex-Micro-3.0` | 第三版固件、Companion 和构建工具 | [3.0 使用说明](docs/Codex-Micro-3.0-使用说明.md) |
+| `tools/Codex-Quota-Sync` | 独立的 macOS 额度同步工具 | [同步工具说明](docs/Codex-额度同步工具-使用说明.md) |
 
-仓库只发布经过检查的源码，不包含原始 ZIP、预编译 BIN、本机虚拟环境或构建缓存。请在自己的 Mac 上构建，避免把构建机路径固化进公开二进制。
+公开仓库只放源码和说明，不放预编译 BIN、虚拟环境、构建缓存或本机配置。
 
 ## 快速开始
 
-1. 准备 Waveshare ESP32-S3-Touch-LCD-1.85B、数据线、Python 3 和 PlatformIO。
-2. 稳定使用进入 `firmware/Codex-Micro-2.0`；测试第三版 UI 才进入 `firmware/Codex-Micro-3.0`。
-3. 在 macOS 蓝牙设置中配对 `Codex Micro`，为 ChatGPT/Codex 开启“输入监控”。
-4. 双击 `firmware/Codex-Micro-2.0/companion/launch_companion.command`，连接后同步额度和任务信息。
+准备一块 Waveshare ESP32-S3-Touch-LCD-1.85B、一根支持数据传输的 USB 线、Python 3 和 PlatformIO。
 
-详细按键、长按分级、录音、摇杆、提示音、重新配对和恢复出厂操作见 [2.0 完整说明](docs/Codex-Micro-2.0-使用说明.md)。
+```sh
+git clone https://github.com/streetlightstartupnotes/Codex-Macro32.git
+cd Codex-Macro32/firmware/Codex-Micro-3.0
+python3 -m pip install platformio
+./flash.command
+```
+
+`flash.command` 会先检查代码，再构建 V3 USB 麦克风版。普通升级只写 `0x10000` 应用区，保留 NVS、蓝牙绑定、额度缓存和 Companion 设置。脚本识别到 V3 维护串口后会自动进入下载模式，写完后自动返回应用。
+
+从不含维护串口的旧固件第一次迁移时，需要先让开发板进入一次 ROM 下载模式。关机并拔线，按住 BOOT 后插入 USB，等待约两秒再松开，然后重新运行 `./flash.command`。完成这次迁移后，后续升级不再需要 BOOT。
+
+刷入后继续完成以下设置。
+
+1. 在 macOS 蓝牙设置中配对 `Codex Micro`。
+2. 重新打开 ChatGPT Desktop，并为 ChatGPT/Codex 开启输入监控权限。
+3. 双击 `firmware/Codex-Micro-3.0/companion/launch_companion.command`。
+4. 等待 Companion 写入额度和任务数据。
+
+Companion 默认会在检测到 `Codex Macro32 Mic` 插入后把它设为系统默认输入，拔线时恢复此前的麦克风。GUI 中可以关闭这个选项。GUI、命令行和登录自启共用进程锁，同一时间只会有一个实例控制蓝牙和默认输入。
+
+## 操作速查
+
+| 操作 | 结果 |
+| --- | --- |
+| 点击 `1` 到 `6` | 切换对应 Agent |
+| 长按 `1` 到 `6` | 临时显示任务详情 |
+| 中央短点 | 发送当前输入 |
+| 中央按住约 0.8 秒后松手 | 进入六快捷页 |
+| 中央按住约 5 秒后松手 | 进入四向摇杆页 |
+| 中央按住约 10 秒后松手 | 清除旧蓝牙绑定并重新广播 |
+| 中央持续按住 20 秒 | 清除 NVS、绑定、额度和设置 |
+| 快捷页或摇杆页点击中央 | 返回首页 |
+| 按住和松开 BOOT | 开始和结束 Push-to-talk |
+| 350 ms 内双击 BOOT | 锁定录音，再按一次停止 |
+
+完整操作、状态文字、USB 麦克风和排错方法见 [V3 使用说明](docs/Codex-Micro-3.0-使用说明.md)。构建环境、协议和回归清单见 [V3 固件 README](firmware/Codex-Micro-3.0/README.md)。
+
+## 许可与第三方代码
+
+本仓库采用分层许可。上游 MIT、Apache-2.0 等内容继续遵循各自原许可，项目新增内容的使用边界见 [有限开放源码使用说明](LIMITED_SOURCE_USE.md) 和 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
 ## 作者与维护
 
-项目发布与维护：**路灯同学创业笔记**
+项目发布与维护为路灯同学创业笔记。
 
 - [X / Twitter](https://x.com/LDstartupnotes)
 - [小红书](https://www.xiaohongshu.com/user/profile/63fd97c1000000001400d0ea)

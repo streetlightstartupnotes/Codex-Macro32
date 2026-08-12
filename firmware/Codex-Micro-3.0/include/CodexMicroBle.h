@@ -45,6 +45,7 @@ struct CodexMicroState {
   LightingSide keys;
   bool connected = false;
   bool bleConnected = false;
+  bool bleAuthenticated = false;
   bool companionReady = false;
   bool dirty = true;
   int weeklyLeft = -1;
@@ -77,10 +78,12 @@ class CodexMicroBle {
 
  private:
   class ServerCallbacks;
+  class SecurityCallbacks;
   class OutputCallbacks;
   class CompanionCallbacks;
 
   void onConnected(bool connected);
+  void onAuthenticationComplete(bool success);
   void onOutput(const uint8_t* data, size_t length);
   void onCompanionWrite(const uint8_t* data, size_t length);
   void restoreUsage();

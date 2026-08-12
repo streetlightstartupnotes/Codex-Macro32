@@ -4,6 +4,8 @@ __pycache__/
 *.py[cod]
 .venv/
 .pio/
+.pio-core/
+.dummy/
 .env
 .env.*
 *.bin

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from bleak import BleakClient
+from process_lock import ProcessLock
 
 
 CHARACTERISTIC_UUID = "df2b7c01-76b6-4b6c-a8c7-c653e4342010"
@@ -57,12 +58,14 @@ STATUS_CODES = {
 class BridgeSettings:
     interval: int = 300
     sound_enabled: bool = True
+    auto_select_usb_mic: bool = True
 
     def normalized(self) -> "BridgeSettings":
         return replace(
             self,
             interval=max(15, min(3600, int(self.interval))),
             sound_enabled=bool(self.sound_enabled),
+            auto_select_usb_mic=bool(self.auto_select_usb_mic),
         )
 
 
@@ -526,28 +529,78 @@ class BridgeController:
         self._thread: Optional[threading.Thread] = None
         self._active_server: Optional[AppServer] = None
         self._last_state = ""
+        self._audio_selector = None
+        self._ble_writer_lock = ProcessLock()
+        self._owns_process_lock = False
 
-    def start(self) -> None:
+    def start(self) -> bool:
         if self._thread is not None and self._thread.is_alive():
-            return
-        self._thread = threading.Thread(target=self._thread_main, daemon=True)
-        self._thread.start()
+            return True
+        if not self._ble_writer_lock.acquire():
+            self._emit_state("busy", "已有 Companion 正在运行，当前实例未启动")
+            return False
+        self._owns_process_lock = True
+        try:
+            if sys.platform == "darwin":
+                from mac_audio_input import AutomaticInputSelector
+
+                self._audio_selector = AutomaticInputSelector(
+                    enabled=self._settings.auto_select_usb_mic,
+                    callback=self._callback,
+                )
+                self._audio_selector.start()
+            self._thread = threading.Thread(target=self._thread_main, daemon=True)
+            self._thread.start()
+        except Exception:
+            self._stop_audio_selector()
+            self._release_process_lock()
+            raise
+        return True
 
     def stop(self) -> None:
         self._stop.set()
+        if self._audio_selector is not None:
+            self._audio_selector.stop()
         with self._lock:
             server = self._active_server
         if server is not None:
             server.close()
 
     def join(self, timeout: float = 5) -> None:
-        if self._thread is not None:
-            self._thread.join(timeout=timeout)
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=timeout)
+        self._stop_audio_selector(timeout=min(timeout, 3))
+        if thread is None or not thread.is_alive():
+            self._release_process_lock()
+
+    def _stop_audio_selector(self, timeout: float = 3) -> None:
+        selector = self._audio_selector
+        if selector is None:
+            return
+        self._audio_selector = None
+        selector.stop()
+        try:
+            selector.join(timeout=timeout)
+        except RuntimeError:
+            # Thread.start() itself may have failed before the selector thread
+            # became joinable. The BLE writer lock must still be released.
+            pass
+
+    def _release_process_lock(self) -> None:
+        with self._lock:
+            if not self._owns_process_lock:
+                return
+            self._owns_process_lock = False
+        self._ble_writer_lock.release()
 
     def update_settings(self, settings: BridgeSettings) -> None:
+        normalized = settings.normalized()
         with self._lock:
-            self._settings = settings.normalized()
+            self._settings = normalized
             self._force_sync = True
+        if self._audio_selector is not None:
+            self._audio_selector.set_enabled(normalized.auto_select_usb_mic)
 
     def sync_now(self) -> None:
         with self._lock:
@@ -587,6 +640,9 @@ class BridgeController:
             asyncio.run(self._run_forever())
         except Exception as error:
             self._emit_state("error", str(error))
+        finally:
+            self._stop_audio_selector()
+            self._release_process_lock()
 
     async def _run_forever(self) -> None:
         while not self._stop.is_set():
@@ -645,6 +701,11 @@ class BridgeController:
                             await client.write_gatt_char(
                                 CHARACTERISTIC_UUID, packet, response=True
                             )
+                            # Yield between acknowledged writes. This keeps
+                            # CoreBluetooth and Bluedroid from batching a
+                            # complete six-Agent snapshot into one callback
+                            # burst on slower BLE connection intervals.
+                            await asyncio.sleep(0.05)
 
                         current_status = {
                             agent.thread_id: agent.status
@@ -709,12 +770,14 @@ async def run(args: argparse.Namespace) -> None:
         BridgeSettings(
             interval=args.interval,
             sound_enabled=not args.silent,
+            auto_select_usb_mic=not args.no_auto_usb_mic,
         ),
         callback,
         device_name=args.device,
         codex_path=args.codex,
     )
-    controller.start()
+    if not controller.start():
+        return
     try:
         while not stopped.is_set():
             await asyncio.sleep(1)
@@ -729,6 +792,11 @@ def main() -> None:
     parser.add_argument("--codex", default=default_codex_path())
     parser.add_argument("--interval", type=int, default=300)
     parser.add_argument("--silent", action="store_true")
+    parser.add_argument(
+        "--no-auto-usb-mic",
+        action="store_true",
+        help="do not select Codex Macro32 Mic as the macOS default input",
+    )
     try:
         asyncio.run(run(parser.parse_args()))
     except KeyboardInterrupt:

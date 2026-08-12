@@ -46,6 +46,7 @@ def load_settings() -> BridgeSettings:
         return BridgeSettings(
             interval=int(value.get("interval", 300)),
             sound_enabled=bool(value.get("sound_enabled", True)),
+            auto_select_usb_mic=bool(value.get("auto_select_usb_mic", True)),
         ).normalized()
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return BridgeSettings()
@@ -56,6 +57,7 @@ def save_settings(settings: BridgeSettings) -> None:
     value = {
         "interval": normalized.interval,
         "sound_enabled": normalized.sound_enabled,
+        "auto_select_usb_mic": normalized.auto_select_usb_mic,
     }
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = SETTINGS_PATH.with_suffix(".tmp")
@@ -103,6 +105,7 @@ class CompanionWindow:
         settings = load_settings()
         self.interval_var = tk.StringVar(value=str(settings.interval))
         self.sound_var = tk.BooleanVar(value=settings.sound_enabled)
+        self.auto_mic_var = tk.BooleanVar(value=settings.auto_select_usb_mic)
         self.connection_var = tk.StringVar(value="正在检查连接…")
         self.sync_var = tk.StringVar(value="尚未同步")
         self.quota_value_var = tk.StringVar(value="—")
@@ -111,6 +114,7 @@ class CompanionWindow:
         )
         self.path_var = tk.StringVar(value="选择一项查看完整工作目录")
         self.detail_var = tk.StringVar(value="")
+        self.audio_input_var = tk.StringVar(value="有线麦克风自动选择已开启")
         self._connected = False
         self._closing = False
         self._agents_by_item: dict[str, AgentMetadata] = {}
@@ -140,7 +144,7 @@ class CompanionWindow:
 
         settings_box = ttk.LabelFrame(outer, text="同步设置", padding=14)
         settings_box.grid(row=1, column=0, sticky="ew", pady=(16, 14))
-        for column in range(5):
+        for column in range(6):
             settings_box.columnconfigure(column, weight=1 if column == 2 else 0)
 
         ttk.Label(settings_box, text="额度同步间隔").grid(row=0, column=0, sticky="e")
@@ -162,10 +166,17 @@ class CompanionWindow:
             command=self.settings_changed,
         ).grid(row=0, column=3, sticky="w", padx=(18, 14))
 
+        ttk.Checkbutton(
+            settings_box,
+            text="插线自动选择设备麦克风",
+            variable=self.auto_mic_var,
+            command=self.settings_changed,
+        ).grid(row=0, column=4, sticky="w", padx=(4, 14))
+
         self.sync_button = ttk.Button(
             settings_box, text="立即同步", command=self.sync_now, style="Accent.TButton"
         )
-        self.sync_button.grid(row=0, column=4, sticky="e")
+        self.sync_button.grid(row=0, column=5, sticky="e")
 
         content = ttk.Frame(outer)
         content.grid(row=2, column=0, sticky="nsew")
@@ -244,10 +255,15 @@ class CompanionWindow:
         )
         ttk.Label(
             footer_row,
+            textvariable=self.audio_input_var,
+            style="Muted.TLabel",
+        ).grid(row=0, column=1, sticky="e", padx=(12, 12))
+        ttk.Label(
+            footer_row,
             textvariable=self.detail_var,
             style="Muted.TLabel",
             anchor="e",
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=2, sticky="e")
 
     def current_settings(self) -> BridgeSettings:
         try:
@@ -257,6 +273,7 @@ class CompanionWindow:
         return BridgeSettings(
             interval=interval,
             sound_enabled=self.sound_var.get(),
+            auto_select_usb_mic=self.auto_mic_var.get(),
         ).normalized()
 
     def settings_changed(self, _event: object = None) -> None:
@@ -365,12 +382,17 @@ class CompanionWindow:
         self.root.after(100, self._drain_events)
 
     def _handle_event(self, event: str, payload: dict[str, Any]) -> None:
+        if event == "audio_input":
+            self.audio_input_var.set(str(payload.get("detail", "")))
+            return
+
         if event == "connection":
             state = str(payload.get("state", ""))
             self._connected = state == "connected"
             prefix = {
                 "connected": "●",
                 "connecting": "◐",
+                "busy": "◐",
                 "disconnected": "○",
                 "error": "!",
                 "stopped": "○",
