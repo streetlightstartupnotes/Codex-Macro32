@@ -431,25 +431,8 @@ void LCD_Init() {
   Touch_Init();
 }
 
-static void test_draw_bitmap(esp_lcd_panel_handle_t panel_handle)
-{
-  uint16_t row_line = ((EXAMPLE_LCD_WIDTH / EXAMPLE_LCD_COLOR_BITS) << 1) >> 1;
-  uint8_t byte_per_pixel = EXAMPLE_LCD_COLOR_BITS / 8;
-  uint8_t *color = (uint8_t *)heap_caps_calloc(1, row_line * EXAMPLE_LCD_HEIGHT * byte_per_pixel, MALLOC_CAP_DMA);
-
-
-  for (int j = 0; j < EXAMPLE_LCD_COLOR_BITS; j++) {
-      for (int i = 0; i < row_line * EXAMPLE_LCD_HEIGHT; i++) {
-          for (int k = 0; k < byte_per_pixel; k++) {
-              color[i * byte_per_pixel + k] = (SPI_SWAP_DATA_TX(BIT(j), EXAMPLE_LCD_COLOR_BITS) >> (k * 8)) & 0xff;
-          }
-      }
-      esp_lcd_panel_draw_bitmap(panel_handle, 0, j * row_line, EXAMPLE_LCD_HEIGHT, (j + 1) * row_line, color);
-  }
-  free(color);
-}
-
 esp_lcd_panel_handle_t panel_handle = NULL;
+esp_lcd_panel_io_handle_t panel_io_handle = NULL;
 int QSPI_Init(void){
   static const spi_bus_config_t host_config = {            
     .data0_io_num = ESP_PANEL_LCD_SPI_IO_DATA0,                    
@@ -490,8 +473,8 @@ int QSPI_Init(void){
       .cs_high_active = 0,            
     },                                  
   };
-  esp_lcd_panel_io_handle_t io_handle = NULL;
-  if(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)ESP_PANEL_HOST_SPI_ID_DEFAULT, &io_config, &io_handle) != ESP_OK){
+  esp_lcd_panel_io_handle_t probe_io_handle = NULL;
+  if(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)ESP_PANEL_HOST_SPI_ID_DEFAULT, &io_config, &probe_io_handle) != ESP_OK){
     printf("Failed to set LCD communication parameters -- SPI\r\n");
     return 0;
   }
@@ -507,20 +490,23 @@ int QSPI_Init(void){
   printf("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\r\n");
   esp_err_t ret;
   int lcd_cmd = 0x04;
-  uint8_t register_data[4]; 
+  uint8_t register_data[4] = {};
   size_t param_size = sizeof(register_data);
   lcd_cmd &= 0xff;
   lcd_cmd <<= 8;
   lcd_cmd |= LCD_OPCODE_READ_CMD << 24;  // Use the read opcode instead of write
-  ret = esp_lcd_panel_io_rx_param(io_handle, lcd_cmd, register_data, param_size); 
+  ret = esp_lcd_panel_io_rx_param(probe_io_handle, lcd_cmd, register_data, param_size);
   if (ret == ESP_OK) {
     printf("Register 0x04 data: %02x %02x %02x %02x\n", register_data[0], register_data[1], register_data[2], register_data[3]);
   } else {
     printf("Failed to read register 0x04, error code: %d\n", ret);
   } 
-  // panel_io_spi_del(io_handle);
+  // The low-speed handle is used only for panel identification. Keeping it
+  // registered wastes a SPI device slot and leaves two owners on the bus.
+  esp_lcd_panel_io_del(probe_io_handle);
+  probe_io_handle = NULL;
   io_config.pclk_hz = ESP_PANEL_LCD_SPI_CLK_HZ;
-  if(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)ESP_PANEL_HOST_SPI_ID_DEFAULT, &io_config, &io_handle) != ESP_OK){
+  if(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)ESP_PANEL_HOST_SPI_ID_DEFAULT, &io_config, &panel_io_handle) != ESP_OK){
     printf("Failed to set LCD communication parameters -- SPI\r\n");
     return 0;
   }
@@ -548,14 +534,13 @@ int QSPI_Init(void){
     },                                                            
     .vendor_config = (void *) &vendor_config,                                  
   };
-  esp_lcd_new_panel_st77916(io_handle, &panel_config, &panel_handle);
+  esp_lcd_new_panel_st77916(panel_io_handle, &panel_config, &panel_handle);
 
   esp_lcd_panel_reset(panel_handle);
   esp_lcd_panel_init(panel_handle);
   // esp_lcd_panel_invert_color(panel_handle,false);
 
   esp_lcd_panel_disp_on_off(panel_handle, true);
-  test_draw_bitmap(panel_handle);
   return 1;
 }
 
@@ -584,7 +569,21 @@ void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yen
     Yend = EXAMPLE_LCD_HEIGHT;
     
   // printf("Xstart = %d    Ystart = %d    Xend = %d    Yend = %d \r\n",Xstart, Ystart, Xend, Yend);
-  esp_lcd_panel_draw_bitmap(panel_handle, Xstart, Ystart, Xend, Yend, color);                     // x_end End index on x-axis (x_end not included)
+  const esp_err_t draw_result = esp_lcd_panel_draw_bitmap(
+      panel_handle, Xstart, Ystart, Xend, Yend, color);
+  if (draw_result != ESP_OK) {
+    printf("LCD draw failed: %s\r\n", esp_err_to_name(draw_result));
+    return;
+  }
+
+  // draw_bitmap queues DMA and returns before it has finished reading `color`.
+  // LVGL may recycle that buffer as soon as LCD_addWindow returns, so drain the
+  // queue here before LvglPort calls lv_disp_flush_ready().
+  const esp_err_t flush_result =
+      esp_lcd_panel_io_tx_param(panel_io_handle, -1, NULL, 0);
+  if (flush_result != ESP_OK) {
+    printf("LCD DMA drain failed: %s\r\n", esp_err_to_name(flush_result));
+  }
 }
 
 

@@ -11,6 +11,7 @@
 #include <BLEUtils.h>
 #include <Preferences.h>
 #include <esp_gap_ble_api.h>
+#include <esp_system.h>
 #include <nvs_flash.h>
 
 #include <vector>
@@ -22,7 +23,7 @@ volatile bool bleTransportConnected = false;
 
 constexpr char kDeviceName[] = "Codex Micro";
 constexpr char kManufacturer[] = "Work Louder";
-constexpr char kFirmwareVersion[] = "3.0.0-waveshare-1.85b";
+constexpr char kFirmwareVersion[] = "3.0.3-waveshare-1.85b";
 constexpr char kCompanionServiceUuid[] = "df2b7c00-76b6-4b6c-a8c7-c653e4342010";
 constexpr char kCompanionCharacteristicUuid[] = "df2b7c01-76b6-4b6c-a8c7-c653e4342010";
 constexpr size_t kPayloadSize = 61;
@@ -105,11 +106,11 @@ class CodexMicroBle::ServerCallbacks final : public BLEServerCallbacks {
  public:
   explicit ServerCallbacks(CodexMicroBle& owner) : owner_(owner) {}
 
-  void onConnect(BLEServer* server) override {
+  void onConnect(BLEServer*) override {
     owner_.onConnected(true);
-    // Keep advertising so the local usage bridge can share the connection
-    // with the operating-system HID client.
-    server->startAdvertising();
+    // Do not restart advertising while macOS is still completing HOGP pairing.
+    // CoreBluetooth clients share the system HID connection, so Companion can
+    // retrieve the already-connected peripheral without a second BLE link.
   }
 
   void onDisconnect(BLEServer* server) override {
@@ -126,8 +127,9 @@ class CodexMicroBle::OutputCallbacks final : public BLECharacteristicCallbacks {
   explicit OutputCallbacks(CodexMicroBle& owner) : owner_(owner) {}
 
   void onWrite(BLECharacteristic* characteristic) override {
-    const String value = characteristic->getValue();
-    owner_.onOutput(reinterpret_cast<const uint8_t*>(value.c_str()), value.length());
+    owner_.enqueueWrite(PendingWriteKind::HidOutput,
+                        characteristic->getData(),
+                        characteristic->getLength());
   }
 
  private:
@@ -139,9 +141,9 @@ class CodexMicroBle::CompanionCallbacks final : public BLECharacteristicCallback
   explicit CompanionCallbacks(CodexMicroBle& owner) : owner_(owner) {}
 
   void onWrite(BLECharacteristic* characteristic) override {
-    const String value = characteristic->getValue();
-    owner_.onCompanionWrite(reinterpret_cast<const uint8_t*>(value.c_str()),
-                            value.length());
+    owner_.enqueueWrite(PendingWriteKind::Companion,
+                        characteristic->getData(),
+                        characteristic->getLength());
   }
 
  private:
@@ -150,6 +152,15 @@ class CodexMicroBle::CompanionCallbacks final : public BLECharacteristicCallback
 
 void CodexMicroBle::begin() {
   stateMutex_ = xSemaphoreCreateMutex();
+  pendingWriteQueue_ = xQueueCreateStatic(
+      kPendingWriteDepth, sizeof(PendingWrite), pendingWriteQueueBuffer_,
+      &pendingWriteQueueStorage_);
+  if (stateMutex_ == nullptr || pendingWriteQueue_ == nullptr) {
+    Serial.println("BLE state allocation failed");
+    abort();
+  }
+  resetReason_ = static_cast<uint8_t>(esp_reset_reason());
+  Serial.printf("ESP reset reason=%u\n", resetReason_);
   restoreUsage();
   restoreCompanionConfig();
 
@@ -184,10 +195,11 @@ void CodexMicroBle::begin() {
   companion_->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED |
                                    ESP_GATT_PERM_WRITE_ENCRYPTED);
   companion_->addDescriptor(new BLE2902());
-  StaticJsonDocument<128> identity;
+  StaticJsonDocument<192> identity;
   identity["ready"] = true;
   identity["device_id"] = deviceId_;
   identity["short_id"] = shortId_;
+  identity["reset_reason"] = resetReason_;
   String identityJson;
   serializeJson(identity, identityJson);
   companion_->setValue(identityJson.c_str());
@@ -204,6 +216,27 @@ void CodexMicroBle::begin() {
 
   input_ = hid_->inputReport(kReportId);
   output_ = hid_->outputReport(kReportId);
+
+  // Arduino-ESP32 3.3.11 relaxed the HID Report Reference and input CCCD
+  // descriptors to plain read/write. macOS then discovers the HOGP service
+  // but never reaches an encrypted attribute that starts SMP bonding. Restore
+  // the descriptor permissions used by the proven 3.2.1/V2 stack before the
+  // HID service is started and its attributes are registered with Bluedroid.
+  constexpr uint16_t kEncryptedReadWrite =
+      ESP_GATT_PERM_READ_ENCRYPTED | ESP_GATT_PERM_WRITE_ENCRYPTED;
+  if (BLEDescriptor* descriptor =
+          input_->getDescriptorByUUID(BLEUUID(static_cast<uint16_t>(0x2908)))) {
+    descriptor->setAccessPermissions(kEncryptedReadWrite);
+  }
+  if (BLEDescriptor* descriptor =
+          input_->getDescriptorByUUID(BLEUUID(static_cast<uint16_t>(0x2902)))) {
+    descriptor->setAccessPermissions(kEncryptedReadWrite);
+  }
+  if (BLEDescriptor* descriptor =
+          output_->getDescriptorByUUID(BLEUUID(static_cast<uint16_t>(0x2908)))) {
+    descriptor->setAccessPermissions(kEncryptedReadWrite);
+  }
+
   output_->setCallbacks(new OutputCallbacks(*this));
   hid_->startServices();
   hid_->setBatteryLevel(batteryPercentage_);
@@ -211,7 +244,9 @@ void CodexMicroBle::begin() {
   BLEAdvertising* advertising = BLEDevice::getAdvertising();
   advertising->setAppearance(GENERIC_HID);
   advertising->addServiceUUID(hid_->hidService()->getUUID());
-  advertising->addServiceUUID(kCompanionServiceUuid);
+  // Keep the advertising identity unambiguously HOGP. The Companion service
+  // remains in the GATT database and is retrieved after the HID connection is
+  // established; it does not need to occupy the advertising packet.
   advertising->setScanResponse(true);
   advertising->setMinPreferred(0x06);
   advertising->setMaxPreferred(0x12);
@@ -253,6 +288,7 @@ void CodexMicroBle::requestRebond() {
   state_.connected = false;
   state_.bleConnected = false;
   state_.bleAuthenticated = false;
+  state_.hidReady = false;
   state_.companionReady = false;
   state_.dirty = true;
   xSemaphoreGive(stateMutex_);
@@ -280,7 +316,41 @@ void CodexMicroBle::requestRebond() {
   Serial.println("Re-pair: advertising restarted");
 }
 
-void CodexMicroBle::onCompanionWrite(const uint8_t* data, size_t length) {
+void CodexMicroBle::enqueueWrite(PendingWriteKind kind, const uint8_t* data,
+                                 size_t length) {
+  if (pendingWriteQueue_ == nullptr || data == nullptr || length == 0 ||
+      length > kMaxPendingWriteBytes) {
+    ++droppedWritePackets_;
+    return;
+  }
+
+  PendingWrite write;
+  write.kind = kind;
+  write.length = static_cast<uint16_t>(length);
+  memcpy(write.data, data, length);
+  if (xQueueSend(pendingWriteQueue_, &write, 0) != pdPASS) {
+    ++droppedWritePackets_;
+  }
+}
+
+void CodexMicroBle::poll() {
+  if (pendingWriteQueue_ == nullptr) return;
+
+  PendingWrite write;
+  // The desktop bridge spaces acknowledged writes by 50 ms. Processing up to
+  // eight packets per Arduino loop keeps the queue empty without monopolizing
+  // LVGL when a fragmented HID RPC and a Companion snapshot arrive together.
+  for (size_t index = 0; index < 8; ++index) {
+    if (xQueueReceive(pendingWriteQueue_, &write, 0) != pdPASS) break;
+    if (write.kind == PendingWriteKind::HidOutput) {
+      processOutput(write.data, write.length);
+    } else {
+      processCompanionWrite(write.data, write.length);
+    }
+  }
+}
+
+void CodexMicroBle::processCompanionWrite(const uint8_t* data, size_t length) {
   if (data == nullptr || length == 0 || length > 256) return;
   StaticJsonDocument<512> document;
   const DeserializationError error = deserializeJson(document, data, length);
@@ -573,13 +643,8 @@ bool CodexMicroBle::connected() {
   if (stateMutex_ == nullptr) {
     return false;
   }
-  const bool transportConnected = bleTransportConnected;
   xSemaphoreTake(stateMutex_, portMAX_DELAY);
-  if (state_.connected != transportConnected) {
-    state_.connected = transportConnected;
-    state_.dirty = true;
-  }
-  const bool result = transportConnected;
+  const bool result = state_.connected;
   xSemaphoreGive(stateMutex_);
   return result;
 }
@@ -589,12 +654,7 @@ CodexMicroState CodexMicroBle::snapshot() {
   if (stateMutex_ == nullptr) {
     return copy;
   }
-  const bool transportConnected = bleTransportConnected;
   xSemaphoreTake(stateMutex_, portMAX_DELAY);
-  if (state_.connected != transportConnected) {
-    state_.connected = transportConnected;
-    state_.dirty = true;
-  }
   copy = state_;
   state_.dirty = false;
   xSemaphoreGive(stateMutex_);
@@ -606,11 +666,12 @@ void CodexMicroBle::onConnected(bool connected) {
   xSemaphoreTake(stateMutex_, portMAX_DELAY);
   const bool wasBleConnected = state_.bleConnected;
   state_.bleConnected = connected;
-  state_.connected = connected;
   if (!connected || !wasBleConnected) {
     state_.bleAuthenticated = false;
+    state_.hidReady = false;
     state_.companionReady = false;
   }
+  state_.connected = connected && state_.hidReady;
   state_.dirty = true;
   xSemaphoreGive(stateMutex_);
   rpcBuffer_.clear();
@@ -627,7 +688,7 @@ void CodexMicroBle::onAuthenticationComplete(bool success) {
   xSemaphoreGive(stateMutex_);
 }
 
-void CodexMicroBle::onOutput(const uint8_t* data, size_t length) {
+void CodexMicroBle::processOutput(const uint8_t* data, size_t length) {
   if (data == nullptr || length < 2) {
     return;
   }
@@ -685,11 +746,24 @@ void CodexMicroBle::handleRpc(const JsonDocument& request) {
   const char* method = request["method"] | "";
   JsonVariantConst id = request["id"];
   JsonVariantConst params = request["params"];
+  xSemaphoreTake(stateMutex_, portMAX_DELAY);
+  const bool firstHidRpc = !state_.hidReady;
+  state_.hidReady = true;
+  state_.connected = state_.bleConnected;
+  state_.dirty = true;
+  xSemaphoreGive(stateMutex_);
+  if (firstHidRpc) {
+    Serial.println("BLE HID host ready");
+  }
   Serial.printf("RPC method=%s\n", method);
 
   if (strcmp(method, "sys.version") == 0) {
-    StaticJsonDocument<128> resultDoc;
+    StaticJsonDocument<224> resultDoc;
     resultDoc["version"] = kFirmwareVersion;
+    resultDoc["reset_reason"] = resetReason_;
+    resultDoc["free_heap"] = ESP.getFreeHeap();
+    resultDoc["min_free_heap"] = ESP.getMinFreeHeap();
+    resultDoc["write_drops"] = droppedWritePackets_.load();
     sendResult(id, resultDoc.as<JsonVariantConst>());
     return;
   }

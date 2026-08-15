@@ -209,7 +209,9 @@ void sendMomentary(const char* id, int agent = -1) {
 
 void sendAgent(int index) {
   char id[5];
-  snprintf(id, sizeof(id), "AG%02d", index + 1);
+  // Codex Desktop names its six zero-based hardware slots AG00..AG05. The UI
+  // remains human-friendly 1..6 while the wire protocol uses the slot index.
+  snprintf(id, sizeof(id), "AG%02d", index);
   sendMomentary(id, index);
 }
 

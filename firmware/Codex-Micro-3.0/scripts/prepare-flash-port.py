@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select a Codex Macro32 serial port and enter the ESP32-S3 ROM loader."""
+"""Select an ESP32-S3 ROM port or migrate one legacy V3 maintenance port."""
 
 from __future__ import annotations
 
@@ -53,8 +53,9 @@ def select_port(requested: str | None, ports: list[Port]) -> Port:
         return candidates[0]
     if not candidates:
         raise RuntimeError(
-            "没有检测到 Codex Macro32 维护串口或 ESP32-S3 ROM 串口。"
-            "不含维护串口的旧固件首次迁移时，需要先进入一次 ROM 下载模式。"
+            "没有检测到 ESP32-S3 ROM 串口。稳定版不暴露维护串口；"
+            "请拔线并按 PWR 确认关机，按住 BOOT 插入 USB，必要时短按 "
+            "PWR 上电，约两秒后松开再重试。"
         )
     names = "、".join(port.device for port in candidates)
     raise RuntimeError(f"检测到多个 Codex/ESP32-S3 串口，请明确指定其中一个：{names}")
@@ -86,8 +87,8 @@ def prepare(port: Port) -> tuple[str, str]:
     if port.vid == ESPRESSIF_VID and port.pid == ESP32S3_ROM_PID:
         return port.device, "no-reset"
     if port.vid == ESPRESSIF_VID and port.pid == CODEX_MIC_PID:
-        # Arduino's native TinyUSB CDC enters the ROM downloader when the host
-        # selects 1200 baud. The audio interface remains unrelated to this path.
+        # Compatibility path for the early V3 build that advertised TinyUSB
+        # CDC. Stable firmware no longer exposes this interface.
         connection = None
         try:
             connection = serial.Serial(port.device, baudrate=1200, timeout=0.1)
