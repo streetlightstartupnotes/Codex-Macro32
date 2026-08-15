@@ -2,7 +2,7 @@
 
 > 当前公开版本仅适用于 macOS。项目发布与维护：路灯同学创业笔记（https://github.com/streetlightstartupnotes）。
 
-把微雪 ESP32-S3-Touch-LCD-1.85B 变成可被 ChatGPT Desktop 识别的便携
+当前固件版本为 **V3.0.3**。把微雪 ESP32-S3-Touch-LCD-1.85B 变成可被 ChatGPT Desktop 识别的便携
 Codex Micro 控制器。项目使用 Vendor HID 兼容协议，不是普通键盘快捷键模拟。
 
 ## 版本与使用入口
@@ -14,8 +14,8 @@ Codex Micro 控制器。项目使用 Vendor HID 兼容协议，不是普通键�
 | `waveshare-1_85b` | 保留 USB Serial/JTAG 的恢复/调试构建，HID 走 BLE | 串口诊断与恢复 |
 
 USB Vendor HID 已移除。所有 Codex 控制命令、状态与 Companion 数据只走 BLE；V3
-默认构建把同一根数据线用于供电/充电和输入型 USB Audio 麦克风，并保留一个只用于
-免按键刷写复位的 CDC 维护串口；不暴露 USB 键盘、Vendor HID 或扬声器。
+默认构建把同一根数据线仅用于供电/充电和输入型 USB Audio 麦克风；不暴露 CDC、
+USB 键盘、Vendor HID 或扬声器。
 
 ## 第三版边界
 
@@ -104,9 +104,9 @@ python3 -m pip install platformio
 ./flash.command /dev/cu.usbmodemNNN
 ```
 
-刷入新版 V3 后，脚本可通过 CDC 维护串口自动让 S3 进入 ROM 下载器，无需按 BOOT。
-从不含维护串口的旧固件首次迁移时，仍需先让设备进入 ROM 下载模式。公开仓库不附带
-预编译固件。
+稳定版不暴露 CDC 维护串口。开发板只有 BOOT 和 PWR 两颗实体键；刷机前先拔线并按
+PWR 确认关机，按住 BOOT 后插入 USB，必要时再短按 PWR 上电，等待约两秒松开 BOOT，
+然后运行脚本。脚本仍兼容从早期带维护串口的 V3 自动迁移一次。公开仓库不附带预编译固件。
 
 默认 V3 USB 麦克风构建：
 
@@ -181,7 +181,7 @@ cp include/CodexV11Secrets.example.h include/CodexV11Secrets.h
 
 | 操作 | 行为 |
 | --- | --- |
-| 点击 1–6 | 立即切换对应 Agent |
+| 点击 1–6 | 立即切换对应 Agent；界面 1–6 对应协议槽位 `AG00`–`AG05` |
 | 长按 1–6 | 显示该 Agent 的详情约 5 秒 |
 | 中央圆环短点 | 发送当前输入 |
 | 中央圆环按住约 0.8s | 进入六快捷键页 |
@@ -208,9 +208,8 @@ cp include/CodexV11Secrets.example.h include/CodexV11Secrets.h
   BOOT（GPIO0）。因此 PWR 可执行硬件关机，但不能由固件改造成单独的屏幕休眠键。
 - 默认 V3 构建把板载麦克风作为 `Codex Macro32 Mic` 上传到 Mac；应用需要在声音输入
   设置中选择它。恢复/串口版不提供 USB Audio。
-- 默认 V3 同时显示 `Codex Macro32 Mic` 和一个 CDC 维护串口；维护串口不承载 Codex
-  控制或额度数据，只允许刷写工具通过 1200 波特触发让 S3 自动进入 ROM 下载器。
-  从不含维护串口的旧固件首次迁移时，仍需先进入一次 ROM 下载模式。
+- 默认 V3 只显示 `Codex Macro32 Mic`，不再提供 CDC 维护串口；Codex 控制、状态和额度
+  全部走 BLE。后续刷机需按前文的 BOOT + PWR 步骤进入 ROM 下载模式。
 - 提示音需要硬件已连接扬声器；QMI8658 缺失时运动功能会自动停用。
 - 固件依赖未公开的 Codex Micro Vendor HID 协议，ChatGPT Desktop 更新后可能需要
   调整。当前仅支持 macOS，Windows 与 Linux 尚未适配和测试。

@@ -7,7 +7,6 @@
 #include <Arduino.h>
 #include <USB.h>
 #include <USBAudioCard.h>
-#include <USBCDC.h>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -26,13 +25,8 @@ extern "C" uint8_t __real_tinyusb_add_string_descriptor(const char* value);
 extern "C" uint8_t __wrap_tinyusb_add_string_descriptor(const char* value) {
   static constexpr char kGenericInterfaceName[] = "TinyUSB UAC1";
   static constexpr char kMicrophoneInterfaceName[] = "Codex Macro32 Mic";
-  static constexpr char kGenericCdcName[] = "TinyUSB CDC";
-  static constexpr char kMaintenanceInterfaceName[] =
-      "Codex Macro32 Maintenance";
   if (value != nullptr && strcmp(value, kGenericInterfaceName) == 0) {
     value = kMicrophoneInterfaceName;
-  } else if (value != nullptr && strcmp(value, kGenericCdcName) == 0) {
-    value = kMaintenanceInterfaceName;
   }
   return __real_tinyusb_add_string_descriptor(value);
 }
@@ -43,12 +37,10 @@ constexpr uint32_t kSampleRate = 48000;
 constexpr size_t kSamplesPerBlock = 480;  // 10 ms
 constexpr size_t kBytesPerBlock = kSamplesPerBlock * sizeof(int16_t);
 constexpr uint32_t kCaptureStackBytes = 4096;
-constexpr UBaseType_t kCapturePriority = 4;
+constexpr UBaseType_t kCapturePriority = 3;
+constexpr BaseType_t kCaptureCore = 1;
 
 USBAudioCard audioCard(kSampleRate, UAC_BPS_16, UAC_SPK_NONE, UAC_MIC_MONO);
-// A CDC interface is retained only as a maintenance path. It carries no Codex
-// controls or usage data; its DTR/RTS and 1200-baud handling lets esptool ask
-// the ESP32-S3 to reboot into the ROM downloader without a BOOT-button cycle.
 AudioFeedback* audioSource = nullptr;
 TaskHandle_t captureTask = nullptr;
 std::atomic<bool> interfaceEnabled{false};
@@ -214,7 +206,7 @@ bool begin(AudioFeedback* audio) {
   }
   if (xTaskCreatePinnedToCore(captureAudio, "usb_mic_capture",
                               kCaptureStackBytes, nullptr, kCapturePriority,
-                              &captureTask, 0) != pdPASS) {
+                              &captureTask, kCaptureCore) != pdPASS) {
     Serial.println("USB mic capture task start failed");
     stopPipeline();
     return false;
@@ -235,13 +227,6 @@ bool begin(AudioFeedback* audio) {
   USB.usbProtocol(0);
   USB.usbPower(500);
   USB.webUSB(false);
-
-  // Construct after Arduino has initialized the USB event loop, but before
-  // USB.begin() freezes the composite descriptor. This avoids cross-file
-  // global-constructor ordering differences between toolchain versions.
-  static USBCDC maintenanceSerial(0);
-  maintenanceSerial.begin(115200);
-  maintenanceSerial.enableReboot(true);
 
   // Publish ready before USB.begin(): once the native port switches from
   // Serial/JTAG to TinyUSB UAC, the final log line may no longer be visible.

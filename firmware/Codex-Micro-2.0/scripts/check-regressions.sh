@@ -43,7 +43,7 @@ require_text "$UI" 'safeTextForDisplay(metadata.workspace, "")' '动态工作区
 forbid_text "$UI" '"--%"' '设备 UI 又显示未知额度占位'
 
 require_text "$UI" 'sendAgent(index);' '六个 Agent 单击入口丢失'
-require_text "$UI" 'snprintf(id, sizeof(id), "AG%02d", index + 1);' 'Agent 1–6 命令编号发生偏移'
+require_text "$UI" 'snprintf(id, sizeof(id), "AG%02d", index);' 'Agent 1–6 未映射到 Codex 的 AG00–AG05 槽位'
 require_text "$UI" '"ACT06", "ACT07", "ACT08", "ACT09", "ACT10", "ACT12"' '第一版六个快捷命令映射丢失'
 require_text "$UI" 'heldMs >= 800 && centerLongPressStage < 1' '短按 0.8s 进入六快捷键入口丢失'
 require_text "$UI" 'if (centerLongPressStage == 0)' '中央不足 0.8s 防误触逻辑丢失'

@@ -214,7 +214,9 @@ void sendMomentary(const char* id, int agent = -1) {
 
 void sendAgent(int index) {
   char id[5];
-  snprintf(id, sizeof(id), "AG%02d", index + 1);
+  // Codex Desktop names its six zero-based hardware slots AG00..AG05. The UI
+  // remains human-friendly 1..6 while the wire protocol uses the slot index.
+  snprintf(id, sizeof(id), "AG%02d", index);
   sendMomentary(id, index);
 }
 
@@ -1118,7 +1120,7 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
                      bool charging) {
   lv_obj_set_style_bg_color(
       connectionDot,
-      lv_color_hex(state.bleConnected ? 0x00E0D0 : 0xE7A93B), 0);
+      lv_color_hex(state.hidReady ? 0x00E0D0 : 0xE7A93B), 0);
   updateBatteryVisual(batteryPercent, charging);
 
   if (micRecording) {
@@ -1229,10 +1231,10 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
                              LV_PART_INDICATOR);
   lv_obj_set_style_arc_width(usageArc, 10, LV_PART_INDICATOR);
 
-  // Connection state has priority over cached quota. A physical BLE link can
-  // exist briefly during pairing, so do not call it connected until link
-  // authentication has completed.
-  if (!state.bleConnected || !state.bleAuthenticated) {
+  // Connection state has priority over cached quota. Companion can establish
+  // an authenticated GATT link without Codex opening the Vendor HID path, so
+  // only a valid desktop HID RPC makes the controller operational.
+  if (!state.bleConnected || !state.bleAuthenticated || !state.hidReady) {
     lv_obj_set_style_text_font(usageLabel, &lv_font_codex_ui_16, 0);
     lv_label_set_text(usageLabel, "等待连接");
     lv_label_set_text(resetLabel, "");

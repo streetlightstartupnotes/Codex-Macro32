@@ -481,6 +481,7 @@ void setup() {
 }
 
 void loop() {
+  codex.poll();
   updateBootButton();
   handleRecordingStartRequest();
   handleRecordingStopRequest();
