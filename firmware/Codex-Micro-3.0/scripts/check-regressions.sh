@@ -5,6 +5,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 UI="$PROJECT_DIR/src/CodexUi.cpp"
 MAIN="$PROJECT_DIR/src/main.cpp"
 BLE="$PROJECT_DIR/src/CodexMicroBle.cpp"
+BLE_HEADER="$PROJECT_DIR/include/CodexMicroBle.h"
 LVGL_PORT="$PROJECT_DIR/src/LvglPort.cpp"
 USB_MIC="$PROJECT_DIR/src/UsbMic.cpp"
 USB_MIC_CONFIG="$PROJECT_DIR/usb-mic/platformio.ini"
@@ -101,7 +102,14 @@ forbid_text "$MAIN" 'audio.recordingStart();' '录音开始又加入了按键音
 forbid_text "$MAIN" 'audio.recordingStop();' '录音停止又加入了按键音'
 forbid_text "$UI" 'sound->completionChime();' '恢复出厂又误用了任务完成音'
 require_text "$MAIN" '} else if (playApproval) {' '任务提示音优先级逻辑丢失'
-require_text "$MAIN" 'setBacklight(kBacklightAwake);' '常亮策略丢失'
+require_text "$MAIN" 'if (!state.connected || !state.lightingReady) return kBacklightAwake;' '未连接时的默认背光策略丢失'
+require_text "$MAIN" 'brightness * kBacklightMaximum' 'Codex 亮度未映射到 LCD 背光'
+require_text "$MAIN" 'setBacklight(backlightTarget);' '同步背光目标未应用'
+forbid_text "$MAIN" 'setBacklight(kBacklightAwake);' '主循环又强制覆盖 Codex 亮度'
+forbid_text "$MAIN" 'light.brightness >' '任务提示音又错误依赖全局灯光亮度'
+require_text "$UI" 'if (light.color == 0) return "UNASSIGNED";' 'Agent 状态未与全局亮度分离'
+require_text "$UI" 'const bool assigned = targetAccent != 0;' 'Agent 分配状态又依赖全局亮度'
+forbid_text "$UI" 'scaleColor(' 'Agent 状态颜色又被背光亮度重复缩放'
 
 require_text "$USB_MIC" 'USBAudioCard audioCard(kSampleRate, UAC_BPS_16, UAC_SPK_NONE, UAC_MIC_MONO);' 'USB 不再是单声道输入设备'
 require_text "$USB_MIC" 'constexpr uint32_t kSampleRate = 48000;' 'USB 麦克风采样率不再是 48 kHz'
@@ -158,7 +166,14 @@ require_text "$INSTALL_BRIDGE" 'process_lock.py' '登录自启动安装脚本漏
 
 
 require_text "$BLE" 'persistUsage(weeklyLeft, resetSeconds);' '额度 NVS 缓存丢失'
-require_text "$BLE" 'constexpr char kFirmwareVersion[] = "3.0.3-waveshare-1.85b";' 'V3 固件版本标识错误'
+require_text "$BLE_HEADER" 'float lightingBrightness = 1.0f;' 'Codex 全局灯光亮度状态丢失'
+require_text "$BLE_HEADER" 'bool lightingReady = false;' '灯光同步就绪状态丢失'
+require_text "$BLE_HEADER" 'std::array<ThreadLight, 6> lightingThreads_;' '灯光传输状态未与 Agent 语义状态分离'
+require_text "$BLE" 'receivedMask == 0x3F' '灯光帧完整性检查丢失'
+require_text "$BLE" 'refreshLightingSummaryLocked(completeFrame);' '完整灯光帧未驱动 LCD 亮度同步'
+require_text "$BLE" 'brightness > 0.0f || hasConfiguredLighting' '全空槽位保护逻辑丢失'
+require_text "$BLE" 'preserveStatusForAutoDim' '自动调暗又会清掉 Agent 状态颜色'
+require_text "$BLE" 'constexpr char kFirmwareVersion[] = "3.0.4-waveshare-1.85b";' 'V3 固件版本标识错误'
 require_text "$BLE" 'persistCompanionConfig' '同步间隔/声音设置持久化丢失'
 forbid_text "$BLE" 'companion_->notify();' 'Companion 写回调又同步发送通知，可能导致连续数据包断连'
 require_text "$UI" 'if (state.weeklyLeft >= 0)' '真实额度显示逻辑丢失'

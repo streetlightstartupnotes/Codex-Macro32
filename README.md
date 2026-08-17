@@ -6,7 +6,7 @@ Codex Macro32 把 Waveshare ESP32-S3-Touch-LCD-1.85B 圆屏开发板变成一台
 
 ## 当前版本
 
-推荐使用 [Codex Macro32 V3.0.3](docs/Codex-Micro-3.0-使用说明.md)。这一版已经包含
+推荐使用 [Codex Macro32 V3.0.4](docs/Codex-Micro-3.0-使用说明.md)。这一版已经包含
 
 - 六个 Agent 圆形按钮，状态颜色填充整颗按钮
 - 中央额度环、中文重置时间和环内电量显示
@@ -17,6 +17,7 @@ Codex Macro32 把 Waveshare ESP32-S3-Touch-LCD-1.85B 圆屏开发板变成一台
 - 蓝牙重新配对和恢复出厂
 - `Codex Macro32 Mic` 48 kHz、16 位、单声道 USB 麦克风
 - USB 运行时仅提供麦克风，Codex 控制、状态和额度全部走蓝牙
+- Codex Micro 设置中的亮度仅同步屏幕背光，不重复缩放或清除 Agent 状态颜色，并支持 Codex 的自动调暗时间
 
 V2 保持在已验证的稳定状态，V3 的 UI、USB 麦克风和连接逻辑不会回写到 V2。
 
@@ -44,7 +45,7 @@ python3 -m pip install platformio
 
 `flash.command` 会先检查代码，再构建 V3 USB 麦克风版。普通升级只写 `0x10000` 应用区，保留 NVS、蓝牙绑定、额度缓存和 Companion 设置。
 
-稳定版不暴露运行时维护串口，刷机前需要先让开发板进入 ROM 下载模式。这款板只有 BOOT 和 PWR 两颗实体键：拔线并按 PWR 确认关机，按住 BOOT 后插入 USB，必要时短按 PWR 上电，等待约两秒再松开，然后运行 `./flash.command`。从早期带维护串口的 V3 升级时，脚本仍兼容一次旧版 1200 波特触发。
+稳定版不暴露运行时维护串口，刷机前需要先让开发板进入 ROM 下载模式。这款板只有 BOOT 和 PWR 两颗实体键：先拔掉 USB，再短按 PWR 确认关机；按住 BOOT 后插入 USB，必要时再短按 PWR 上电，等待约两秒后松开 BOOT，然后运行 `./flash.command`。USB 插着时会持续供电，PWR 不能让整机保持真正断电。从早期带维护串口的 V3 升级时，脚本仍兼容一次旧版 1200 波特触发。
 
 刷入后继续完成以下设置。
 

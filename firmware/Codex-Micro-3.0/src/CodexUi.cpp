@@ -92,8 +92,6 @@ bool agentAccentInitialized[6] = {};
 const char* kCommandNames[6] = {"快速", "同意", "拒绝", "分支", "录音", "发送"};
 const char* kCommandIds[6] = {"ACT06", "ACT07", "ACT08", "ACT09", "ACT10", "ACT12"};
 
-uint32_t scaleColor(uint32_t raw, float brightness);
-
 uint32_t blendColor(uint32_t from, uint32_t to, float amount) {
   amount = constrain(amount, 0.0f, 1.0f);
   const uint8_t fromR = (from >> 16) & 0xFF;
@@ -133,7 +131,9 @@ void markInteraction() {
 }
 
 const char* threadStatus(const ThreadLight& light) {
-  if (light.color == 0 || light.brightness <= 0.01f) return "UNASSIGNED";
+  // Protocol brightness is the user's global lighting intensity, not task
+  // state. LCD status remains color-driven while hardware backlight owns dim.
+  if (light.color == 0) return "UNASSIGNED";
   const uint8_t r = (light.color >> 16) & 0xFF;
   const uint8_t g = (light.color >> 8) & 0xFF;
   const uint8_t b = light.color & 0xFF;
@@ -184,16 +184,6 @@ void formatDuration(char* output, size_t size, uint32_t seconds) {
   } else {
     snprintf(output, size, "%lu分", static_cast<unsigned long>(seconds / 60));
   }
-}
-
-uint32_t scaleColor(uint32_t raw, float brightness) {
-  if (raw == 0 || brightness <= 0.01f) return 0xB9C8EC;
-  const float factor = constrain(brightness, 0.28f, 1.0f);
-  const uint8_t r = static_cast<uint8_t>(((raw >> 16) & 0xFF) * factor);
-  const uint8_t g = static_cast<uint8_t>(((raw >> 8) & 0xFF) * factor);
-  const uint8_t b = static_cast<uint8_t>((raw & 0xFF) * factor);
-  return (static_cast<uint32_t>(r) << 16) |
-         (static_cast<uint32_t>(g) << 8) | b;
 }
 
 uint32_t readableTextColor(uint32_t background) {
@@ -751,10 +741,8 @@ void updateAgentVisuals(const CodexMicroState& state) {
   }
 
   for (int i = 0; i < 6; ++i) {
-    const uint32_t targetAccent = scaleColor(state.threads[i].color,
-                                             state.threads[i].brightness);
-    const bool assigned = state.threads[i].color != 0 &&
-                          state.threads[i].brightness > 0.01f;
+    const uint32_t targetAccent = state.threads[i].color;
+    const bool assigned = targetAccent != 0;
     const uint32_t targetFill = assigned ? targetAccent : 0xB9C8EC;
     if (!agentAccentInitialized[i]) {
       displayedAgentAccent[i] = targetFill;
@@ -1211,10 +1199,9 @@ void CodexUi::update(const CodexMicroState& state, int batteryPercent,
       snprintf(runtime, sizeof(runtime), "%s", displayStatus);
     }
     lv_label_set_text(resetLabel, runtime);
-    lv_arc_set_value(usageArc,
-                     constrain(static_cast<int>(light.brightness * 100), 0, 100));
-    const bool assigned = light.color != 0 && light.brightness > 0.01f;
-    const uint32_t accent = scaleColor(light.color, light.brightness);
+    const bool assigned = light.color != 0;
+    lv_arc_set_value(usageArc, assigned ? 100 : 0);
+    const uint32_t accent = light.color;
     lv_obj_set_style_arc_color(usageArc,
                                lv_color_hex(assigned ? accent : 0x18353B),
                                LV_PART_INDICATOR);

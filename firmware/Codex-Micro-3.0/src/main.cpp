@@ -23,6 +23,7 @@ constexpr int kBootButton = 0;
 constexpr uint32_t kBatteryIntervalMs = 30000;
 constexpr uint32_t kUiIntervalMs = 80;
 constexpr uint8_t kBacklightAwake = 72;
+constexpr float kBacklightMaximum = 100.0f;
 constexpr uint32_t kImuIntervalMs = 40;
 constexpr float kImuFilterAlpha = 0.35f;
 constexpr float kMotionReferenceEnterG = 0.20f;
@@ -69,8 +70,8 @@ uint32_t lastBootReleaseAt = 0;
 uint32_t lastBatteryRead = 0;
 uint32_t lastUiUpdate = 0;
 uint32_t lastImuRead = 0;
-uint32_t lastUiInteractionAt = 0;
 uint8_t backlightLevel = kBacklightAwake;
+uint8_t backlightTarget = kBacklightAwake;
 int batteryPercent = 100;
 bool charging = false;
 bool faceDownMuted = false;
@@ -102,22 +103,31 @@ void setBacklight(uint8_t level) {
   Set_Backlight(level);
 }
 
+uint8_t backlightForState(const CodexMicroState& state) {
+  if (!state.connected || !state.lightingReady) return kBacklightAwake;
+  const float brightness = constrain(state.lightingBrightness, 0.0f, 1.0f);
+  return static_cast<uint8_t>(lroundf(brightness * kBacklightMaximum));
+}
+
+void syncBacklight(const CodexMicroState& state) {
+  const uint8_t nextTarget = backlightForState(state);
+  if (nextTarget != backlightTarget) {
+    Serial.printf("Codex lighting backlight=%u%%\n", nextTarget);
+  }
+  backlightTarget = nextTarget;
+  setBacklight(backlightTarget);
+}
+
 void wakeDisplay() {
-  setBacklight(kBacklightAwake);
+  // ChatGPT owns the synchronized brightness. A local touch, recording event
+  // or motion must not override an active Codex Auto-dim command; HID activity
+  // will make ChatGPT send the configured brightness again.
+  setBacklight(backlightTarget);
   ui.wake();
-  lastUiInteractionAt = ui.lastInteractionAt();
 }
 
 void updateBacklight() {
-  const uint32_t interactionAt = ui.lastInteractionAt();
-  if (interactionAt != lastUiInteractionAt) {
-    lastUiInteractionAt = interactionAt;
-  }
-  // The PWR button is wired to the board's power latch and is not readable by
-  // the ESP32. While the device is powered, the display therefore stays at a
-  // stable working brightness; a short PWR press performs the hardware-off
-  // action selected by the user instead of a firmware sleep heuristic.
-  setBacklight(kBacklightAwake);
+  setBacklight(backlightTarget);
 }
 
 float accelerationLength(const Qmi8658Acceleration& value) {
@@ -266,27 +276,27 @@ bool greenDominant(const ThreadLight& light) {
   const int r = (light.color >> 16) & 0xFF;
   const int g = (light.color >> 8) & 0xFF;
   const int b = light.color & 0xFF;
-  return light.brightness > 0.08f && g > r * 1.20f && g > b * 1.12f;
+  return light.color != 0 && g > r * 1.20f && g > b * 1.12f;
 }
 
 bool blueDominant(const ThreadLight& light) {
   const int r = (light.color >> 16) & 0xFF;
   const int g = (light.color >> 8) & 0xFF;
   const int b = light.color & 0xFF;
-  return light.brightness > 0.08f && b > r * 1.18f && b >= g;
+  return light.color != 0 && b > r * 1.18f && b >= g;
 }
 
 bool yellowDominant(const ThreadLight& light) {
   const int r = (light.color >> 16) & 0xFF;
   const int g = (light.color >> 8) & 0xFF;
   const int b = light.color & 0xFF;
-  return light.brightness > 0.08f && r > 150 && g > 90 && b < 120;
+  return light.color != 0 && r > 150 && g > 90 && b < 120;
 }
 
 bool redDominant(const ThreadLight& light) {
   const int r = (light.color >> 16) & 0xFF;
   const int g = (light.color >> 8) & 0xFF;
-  return light.brightness > 0.08f && !yellowDominant(light) && r > 150 &&
+  return light.color != 0 && !yellowDominant(light) && r > 150 &&
          r > g * 1.35f;
 }
 
@@ -456,6 +466,7 @@ void setup() {
   Backlight_Init();
   Set_Backlight(kBacklightAwake);
   backlightLevel = kBacklightAwake;
+  backlightTarget = kBacklightAwake;
   LCD_Init();
   LvglPort_Init();
 
@@ -467,7 +478,6 @@ void setup() {
   companionSoundEnabled = previousState.companionSoundEnabled;
   applyAudioMute();
   ui.update(previousState, batteryPercent, charging);
-  lastUiInteractionAt = ui.lastInteractionAt();
 
   if (audioReady && !audio.muted()) audio.readyChime();
 
@@ -495,6 +505,7 @@ void loop() {
       companionSoundEnabled = state.companionSoundEnabled;
       applyAudioMute();
     }
+    syncBacklight(state);
     checkStateTransitions(state);
     ui.update(state, batteryPercent, charging);
     previousState = state;
