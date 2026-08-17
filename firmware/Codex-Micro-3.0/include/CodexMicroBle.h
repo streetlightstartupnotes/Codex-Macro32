@@ -46,6 +46,8 @@ struct CodexMicroState {
   std::array<CompanionAgentMetadata, 6> companionAgents;
   LightingSide ambient;
   LightingSide keys;
+  float lightingBrightness = 1.0f;
+  bool lightingReady = false;
   bool connected = false;
   bool bleConnected = false;
   bool bleAuthenticated = false;
@@ -116,6 +118,7 @@ class CodexMicroBle {
   void sendJson(const String& json);
   void updateThreadLighting(JsonArrayConst values);
   void updateLightingSide(LightingSide& side, JsonObjectConst value);
+  void refreshLightingSummaryLocked(bool completeFrame);
 
   BLEHIDDevice* hid_ = nullptr;
   BLEServer* server_ = nullptr;
@@ -129,6 +132,10 @@ class CodexMicroBle {
   std::atomic<uint32_t> droppedWritePackets_{0};
   SemaphoreHandle_t stateMutex_ = nullptr;
   CodexMicroState state_;
+  // Raw lighting transport state is kept separate from the semantic Agent
+  // colors shown by the LCD. Desktop Auto-dim deliberately sends an all-off
+  // frame, which must lower the backlight without erasing task status.
+  std::array<ThreadLight, 6> lightingThreads_;
   String rpcBuffer_;
   String deviceId_;
   String shortId_;

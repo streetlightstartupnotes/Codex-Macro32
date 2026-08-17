@@ -23,7 +23,7 @@ volatile bool bleTransportConnected = false;
 
 constexpr char kDeviceName[] = "Codex Micro";
 constexpr char kManufacturer[] = "Work Louder";
-constexpr char kFirmwareVersion[] = "3.0.3-waveshare-1.85b";
+constexpr char kFirmwareVersion[] = "3.0.4-waveshare-1.85b";
 constexpr char kCompanionServiceUuid[] = "df2b7c00-76b6-4b6c-a8c7-c653e4342010";
 constexpr char kCompanionCharacteristicUuid[] = "df2b7c01-76b6-4b6c-a8c7-c653e4342010";
 constexpr size_t kPayloadSize = 61;
@@ -290,6 +290,9 @@ void CodexMicroBle::requestRebond() {
   state_.bleAuthenticated = false;
   state_.hidReady = false;
   state_.companionReady = false;
+  state_.lightingReady = false;
+  state_.lightingBrightness = 1.0f;
+  lightingThreads_.fill(ThreadLight{});
   state_.dirty = true;
   xSemaphoreGive(stateMutex_);
 
@@ -670,6 +673,14 @@ void CodexMicroBle::onConnected(bool connected) {
     state_.bleAuthenticated = false;
     state_.hidReady = false;
     state_.companionReady = false;
+    state_.lightingReady = false;
+    state_.lightingBrightness = 1.0f;
+  }
+  if (connected && !wasBleConnected) {
+    state_.threads.fill(ThreadLight{});
+    lightingThreads_.fill(ThreadLight{});
+    state_.ambient = LightingSide{};
+    state_.keys = LightingSide{};
   }
   state_.connected = connected && state_.hidReady;
   state_.dirty = true;
@@ -791,6 +802,7 @@ void CodexMicroBle::handleRpc(const JsonDocument& request) {
     JsonObjectConst config = params.as<JsonObjectConst>();
     updateLightingSide(state_.ambient, config["ambient"].as<JsonObjectConst>());
     updateLightingSide(state_.keys, config["keys"].as<JsonObjectConst>());
+    refreshLightingSummaryLocked(false);
     state_.dirty = true;
     xSemaphoreGive(stateMutex_);
     sendSuccess(id);
@@ -851,17 +863,42 @@ void CodexMicroBle::sendJson(const String& json) {
 
 void CodexMicroBle::updateThreadLighting(JsonArrayConst values) {
   xSemaphoreTake(stateMutex_, portMAX_DELAY);
+  uint8_t receivedMask = 0;
+  std::array<ThreadLight, 6> nextThreads = state_.threads;
   for (JsonObjectConst value : values) {
     const int id = value["id"] | -1;
     if (id < 0 || id >= static_cast<int>(state_.threads.size())) {
       continue;
     }
-    ThreadLight& light = state_.threads[id];
-    light.color = value["c"] | light.color;
-    light.brightness = value["b"] | light.brightness;
-    light.effect = value["e"] | light.effect;
-    light.speed = value["s"] | light.speed;
+    receivedMask |= static_cast<uint8_t>(1U << id);
+    ThreadLight& raw = lightingThreads_[id];
+    raw.color = value["c"] | raw.color;
+    raw.brightness = value["b"] | raw.brightness;
+    raw.effect = value["e"] | raw.effect;
+    raw.speed = value["s"] | raw.speed;
+    nextThreads[id] = raw;
   }
+  const bool completeFrame = receivedMask == 0x3F;
+  bool allLightsOff = completeFrame;
+  for (const ThreadLight& light : lightingThreads_) {
+    allLightsOff = allLightsOff && light.color == 0 &&
+                   light.brightness <= 0.0f && light.effect == "off";
+  }
+
+  // Desktop Auto-dim uses the same all-off payload as an empty keyboard.
+  // After a meaningful frame has established Agent status, retain that status
+  // while applying zero only to the independent LCD backlight channel. A
+  // normal frame (including user brightness 0 with non-zero status colors)
+  // still refreshes every Agent immediately.
+  const bool preserveStatusForAutoDim =
+      completeFrame && state_.lightingReady && allLightsOff;
+  if (!preserveStatusForAutoDim) {
+    state_.threads = nextThreads;
+  }
+  // ChatGPT sends the keys/ambient frame first and the complete six-thread
+  // frame second. Only the latter proves that a zero means deliberate lights
+  // off (including Auto-dim), rather than an uninitialized connection.
+  refreshLightingSummaryLocked(completeFrame);
   state_.dirty = true;
   xSemaphoreGive(stateMutex_);
 }
@@ -874,4 +911,29 @@ void CodexMicroBle::updateLightingSide(LightingSide& side, JsonObjectConst value
   side.brightness = value["b"] | side.brightness;
   side.effect = value["e"] | side.effect;
   side.speed = value["s"] | side.speed;
+}
+
+void CodexMicroBle::refreshLightingSummaryLocked(bool completeFrame) {
+  float brightness = max(state_.ambient.brightness, state_.keys.brightness);
+  bool hasConfiguredLighting =
+      state_.ambient.color != 0 || state_.ambient.effect != "off" ||
+      state_.keys.color != 0 || state_.keys.effect != "off";
+  for (const ThreadLight& light : lightingThreads_) {
+    brightness = max(brightness, light.brightness);
+    hasConfiguredLighting = hasConfiguredLighting || light.color != 0 ||
+                            light.effect != "off";
+  }
+  if (brightness < 0.0f) brightness = 0.0f;
+  if (brightness > 1.0f) brightness = 1.0f;
+
+  // With no assigned chats, the desktop sends the same all-off payload as an
+  // inactivity timeout. Keep the waiting UI visible until this connection has
+  // first supplied a meaningful lighting frame. Once ready, zero is the real
+  // Auto-dim command and must turn the LCD backlight fully off.
+  if (completeFrame && (brightness > 0.0f || hasConfiguredLighting)) {
+    state_.lightingReady = true;
+  }
+  if (state_.lightingReady) {
+    state_.lightingBrightness = brightness;
+  }
 }
